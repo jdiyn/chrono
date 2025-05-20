@@ -41,6 +41,7 @@ class ChCollisionShape_Type_enum_mapper : public ChCollisionShape {
     CH_ENUM_VAL(Type::SEGMENT2D);
     CH_ENUM_VAL(Type::ARC2D);
     CH_ENUM_VAL(Type::UNKNOWN_SHAPE);
+    CH_ENUM_VAL(Type::HEIGHTFIELD);
     CH_ENUM_MAPPER_END(Type);
 };
 

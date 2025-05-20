@@ -16,6 +16,7 @@ if(CH_ENABLE_MODULE_IRRLICHT OR CH_ENABLE_MODULE_VSG)
         demo_VEH_SCMTerrain_WheeledVehicle
         demo_VEH_SCMTerrain_RigidTire
         demo_VEH_SCMTerrain_TrackedVehicle
+        demo_VEH_RigidTerrain_Heightfield
     )
 endif()
 

@@ -679,6 +679,7 @@ set(Chrono_collision_SOURCES
     collision/ChCollisionShapeTriangle.cpp
     collision/ChCollisionShapeMeshTriangle.cpp
     collision/ChCollisionShapeTriangleMesh.cpp
+    collision/ChCollisionShapeHeightField.cpp
     )
 set(Chrono_collision_HEADERS
     collision/ChCollisionInfo.h
@@ -707,6 +708,7 @@ set(Chrono_collision_HEADERS
     collision/ChCollisionShapeTriangle.h
     collision/ChCollisionShapeMeshTriangle.h
     collision/ChCollisionShapeTriangleMesh.h
+    collision/ChCollisionShapeHeightField.h
     )
 source_group(collision FILES ${Chrono_collision_SOURCES} ${Chrono_collision_HEADERS})
 

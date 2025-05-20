@@ -48,9 +48,10 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
   public:
     /// Patch type.
     enum class PatchType {
-        BOX,        ///< rectangular box
-        MESH,       ///< triangular mesh (from a Wavefront OBJ file)
-        HEIGHT_MAP  ///< triangular mesh (generated from a gray-scale heightmap image)
+        BOX,         ///< rectangular box
+        MESH,        ///< triangular mesh (from a Wavefront OBJ file)
+        HEIGHT_MAP,  ///< triangular mesh (generated from a gray-scale heightmap image)
+        HEIGHTFIELD  ///< bullet heightfield array genereated from in memory height map data (row-major array)
     };
 
     /// Definition of a patch in a rigid terrain model.
@@ -162,6 +163,18 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
         bool visualization = true                     ///< [in] enable/disable construction of visualisation assets
     );
 
+    /// Create a new heightfield/heightmap patch
+    std::shared_ptr<RigidTerrain::Patch> AddPatch(
+        std::shared_ptr<ChContactMaterial> material,
+        const ChCoordsys<>& pos,             ///< [in] patch coordsys
+        const std::vector<double>& heights,  ///< [in] row-major height array - j=0 is BOTTOM of field
+        int grid_nx,                         ///< [in] resolution in X
+        int grid_ny,                         ///< [in] resolution in Y
+        double dimX,                         ///< [in] physical width along X (m)
+        double dimY,                         ///< [in] physical width along Y (m)
+        bool vis);                           ///< [in] Generate a chtrianglemesh to represent the patch (false for Unity)
+
+
     /// Initialize all defined terrain patches.
     void Initialize();
 
@@ -233,6 +246,7 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
     /// Collision is disabled with all other objects in this family.
     void SetCollisionFamily(int family) { m_collision_family = family; }
 
+
   private:
     /// Patch represented as a box domain.
     struct CH_VEHICLE_API BoxPatch : public Patch {
@@ -254,6 +268,23 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
         virtual bool FindPoint(const ChVector3d& loc, double& height, ChVector3d& normal) const override;
         virtual void ExportMeshPovray(const std::string& out_dir, bool smoothed = false) override;
         virtual void ExportMeshWavefront(const std::string& out_dir) override;
+    };
+
+    /// Patch represented as a height field.
+    /// NOTE: Only implemented in Bullet Collision system currently
+    struct CH_VEHICLE_API HeightFieldPatch : public Patch {
+        int m_nx, m_ny;                ///< number of samples in X/Y (i.e. heightmap resolution)
+        double m_length, m_width;      ///< field extent along X/Y in m
+        std::vector<double> m_heights; ///< row-major heights (y=0 / j=0 is at the bottom)
+
+        // heightfield collision shape
+        std::shared_ptr<ChCollisionShapeHeightField> m_hf_shape;
+        // visualisation mesh
+        std::shared_ptr<ChTriangleMeshConnected> m_vis_mesh;
+        std::string m_mesh_name;
+
+        virtual void Initialize() override;
+        virtual bool FindPoint(const ChVector3d& loc, double& height, ChVector3d& normal) const override;
     };
 
     ChSystem* m_system;

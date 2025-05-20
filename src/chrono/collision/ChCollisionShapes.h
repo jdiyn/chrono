@@ -34,5 +34,6 @@
 #include "chrono/collision/ChCollisionShapeTriangle.h"
 #include "chrono/collision/ChCollisionShapeMeshTriangle.h"
 #include "chrono/collision/ChCollisionShapeTriangleMesh.h"
+#include "chrono/collision/ChCollisionShapeHeightField.h"
 
 #endif

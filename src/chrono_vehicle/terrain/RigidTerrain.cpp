@@ -840,6 +840,62 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     return patch;
 }
 
+
+//----------------------------------------------------------
+//  Heightfield patch
+std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
+                                                                       const ChCoordsys<>& pos,            // patch coord
+                                                                       const std::vector<double>& heights, // height array - j=0 is BOTTOM of field
+                                                                       int grid_nx,  // resolution in X
+                                                                       int grid_ny,  // resolution in Y
+                                                                       double dimX,  // physical width along X (m)
+                                                                       double dimY,  // physical length along Y (m)
+                                                                       bool visualize) {
+    using chrono_types::make_shared;
+
+    // initial setup
+    auto patch = make_shared<HeightFieldPatch>();
+    patch->m_type = PatchType::HEIGHTFIELD;
+    patch->m_mesh_name = "heightfield_patch";
+    patch->m_visualize = visualize;
+    AddPatch(patch, pos, material);
+
+    // copy and validate heights, set min/max with double precision
+    // note - use double, bu if use_bullet_double is not set, the heightfield class handles conversion in a macro block
+    // For simplicity, chrono is kept at double
+    int nx = grid_nx;
+    int ny = grid_ny;
+    if ((int)heights.size() != nx * ny)
+        throw std::runtime_error("AddPatch: heights.size() mismatch");
+    std::vector<double> hf_heights(nx * ny);
+    double hmin = heights[0], hmax = heights[0];
+    for (int idx = 0; idx < nx * ny; ++idx) {
+        double h = heights[idx];
+        hf_heights[idx] = h;
+        hmin = std::min(hmin, h);
+        hmax = std::max(hmax, h);
+    }
+
+    // build a single btHeightfieldTerrainShape
+    auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
+                                                      dimX, dimY,                    // field extent along X/Y
+                                                      hf_heights,                    // row-major double array, j=0 is the bottom row!!! Also, double input
+                                                      1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
+                                                      static_cast<float>(hmin), static_cast<float>(hmax),   // min and max heights (bullet takes floats)
+                                                      2,                                                    // set upAxis as Z (i.e. 0,1,2 correspond to xyz)
+                                                      true                          // flip?every?other quad (robust mesh)
+        );
+    patch->m_body->AddCollisionShape(hf_shape);
+
+    // store parameters for recall with findpoint()
+    patch->m_nx = nx;
+    patch->m_ny = ny;
+    patch->m_width = dimX;
+    patch->m_length = dimY;
+    patch->m_heights = std::move(hf_heights);   // easy grab the height data across to the member data
+    return patch;
+}
+
 // -----------------------------------------------------------------------------
 // Functions to modify properties of a patch
 // -----------------------------------------------------------------------------
@@ -968,6 +1024,107 @@ void RigidTerrain::MeshPatch::Initialize() {
         m_body->AddVisualShape(trimesh_shape);
     }
 }
+
+void RigidTerrain::HeightFieldPatch::Initialize() {
+    // if visual bool set, generated a basic trimesh for viewing
+    if (m_visualize) {
+        int nx = m_nx;
+        int ny = m_ny;
+        double W = m_width;
+        double L = m_length;
+        auto& H = m_heights;  // row-major, j=0 at bottom!! important to send data in with correct ordering
+
+        // set Z offset so visual matches Bullet's centered AABB
+        double hmin = H[0], hmax = H[0];
+        for (double h : H) {
+            hmin = std::min(hmin, h);
+            hmax = std::max(hmax, h);
+        }
+        double originZ = 0.5 * (hmin + hmax);
+
+        // grid spacing and half extents
+        double dx = W / double(nx - 1);
+        double dy = L / double(ny - 1);
+        double halfW = 0.5 * W;
+        double halfL = 0.5 * L;
+
+        // setup
+        auto vis_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
+        auto& V = vis_mesh->GetCoordsVertices();
+        auto& N = vis_mesh->GetCoordsNormals();
+        auto& UV = vis_mesh->GetCoordsUV();
+        auto& C = vis_mesh->GetCoordsColors();
+        auto& idx = vis_mesh->GetIndicesVertexes();
+
+        V.resize(nx * ny);
+        N.assign(nx * ny, ChVector3d(0));
+        UV.resize(nx * ny);
+        C.assign(nx * ny, ChColor(1, 1, 1));
+        idx.resize(2 * (nx - 1) * (ny - 1));
+
+        // fill vertices and UVs
+        for (int j = 0; j < ny; ++j) {
+            for (int i = 0; i < nx; ++i) {
+                int vi = j * nx + i;
+                double x = double(i) * dx - halfW;   // from -W/2 to +W/2
+                double y = double(j) * dy - halfL;   // from -L/2 to +L/2
+                double z = H[j * nx + i] - originZ;  // centred height
+                V[vi] = ChVector3d(x, y, z);
+                UV[vi] = ChVector2d(double(i) / (nx - 1), double(j) / (ny - 1));
+            }
+        }
+
+        // build triangles, alternate diagonal each cell to match bullet's quad-flipping
+        int f = 0;
+        for (int j = 0; j < ny - 1; ++j) {
+            for (int i = 0; i < nx - 1; ++i) {
+                int v0 = j * nx + i;
+                int v1 = v0 + 1;
+                int v2 = v0 + nx;
+                int v3 = v2 + 1;
+
+                if ((i + j) % 2 == 0) {
+                    // diagonal from v2 to v1
+                    idx[f++] = ChVector3i(v0, v1, v2);
+                    idx[f++] = ChVector3i(v1, v3, v2);
+                    // accumulate normals
+                    auto n1 = Vcross(V[v2] - V[v0], V[v1] - V[v0]).GetNormalized();
+                    auto n2 = Vcross(V[v3] - V[v1], V[v2] - V[v1]).GetNormalized();
+                    N[v0] += n1;
+                    N[v2] += n1;
+                    N[v1] += n1 + n2;
+                    N[v3] += n2;
+                } else {
+                    // diagonal from v0 to v3
+                    idx[f++] = ChVector3i(v0, v3, v2);
+                    idx[f++] = ChVector3i(v0, v1, v3);
+                    // accumulate normals
+                    auto n1 = Vcross(V[v3] - V[v0], V[v2] - V[v0]).GetNormalized();
+                    auto n2 = Vcross(V[v1] - V[v0], V[v3] - V[v0]).GetNormalized();
+                    N[v0] += n1 + n2;
+                    N[v3] += n1 + n2;
+                    N[v2] += n1;
+                    N[v1] += n2;
+                }
+            }
+        }
+
+        // normalise the accumulated normals
+        for (auto& n : N)
+            n.Normalize();
+
+        // set mesh and attach visual model
+        auto vmod = chrono_types::make_shared<ChVisualModel>();
+        auto tsh = chrono_types::make_shared<ChVisualShapeTriangleMesh>();
+        tsh->AddMaterial(m_vis_mat);
+        tsh->SetName("HeightfieldVisual");
+        tsh->SetMesh(vis_mesh, false);  // no material set other than colour
+        tsh->SetMutable(false);
+        vmod->AddShape(tsh);
+        m_body->AddVisualModel(vmod);
+    }
+}
+
 
 // -----------------------------------------------------------------------------
 
@@ -1122,6 +1279,85 @@ bool RigidTerrain::MeshPatch::FindPoint(const ChVector3d& loc, double& height, C
     normal = result.abs_hitNormal;
 
     return result.hit;
+}
+
+// height and normal determined with bilinear interpolation; expects H[j=0] at bottom (that's how bullet expects it also)
+bool RigidTerrain::HeightFieldPatch::FindPoint(const ChVector3d& loc, double& height, ChVector3d& normal) const {
+    // transform world point into local
+    ChVector3d lp = m_body->TransformPointParentToLocal(loc);
+
+    // normalized coords u[0,1] v[0,1] over X,Y
+    double u = (lp.x() + m_width / 2) / m_width;
+    double v = (lp.y() + m_length / 2) / m_length;
+    // reject anything outside [0,1]
+    if (u < 0 || u >= 1 || v < 0 || v >= 1)
+        return false;
+
+    // map to cell coords in [0 … nx?1], [0 … ny?1]
+    double fx = u * (m_nx - 1);
+    double fy = v * (m_ny - 1);
+    int i = int(std::floor(fx));
+    int j = int(std::floor(fy));
+    // clamp to ensure i+1 ? nx?1, j+1 ? ny?1
+    i = std::min(std::max(i, 0), m_nx - 2);
+    j = std::min(std::max(j, 0), m_ny - 2);
+    double tx = fx - i;
+    double ty = fy - j;
+
+    // fetch corner heights (row-major, j=0 at bottom!!!!!!!!!!)
+    auto at = [&](int ii, int jj) { return m_heights[jj * m_nx + ii]; };
+    float h00 = at(i, j);
+    float h10 = at(i + 1, j);
+    float h01 = at(i, j + 1);
+    float h11 = at(i + 1, j + 1);
+
+    // bilinear interp
+    float h0 = h00 * (1 - tx) + h10 * tx;
+    float h1 = h01 * (1 - tx) + h11 * tx;
+    float hf = h0 * (1 - ty) + h1 * ty;
+
+    // world-space height
+    height = ChWorldFrame::Height(ChVector3d(lp.x(), lp.y(), hf));
+    //-----------------------
+    // get the slope of the heightfield, but ensure we don't crash when vehicle is outside the patch
+    // ----------------------
+    // Compute local grid spacings on the fly
+    double dx = m_width / double(m_nx - 1);
+    double dy = m_length / double(m_ny - 1);
+    // estimate slope in X using central differences, with simple fallbacks at the left/right edges
+    double dhdx;
+    if (i == 0) {
+        // at the very left edge, use the next point over to get slope
+        dhdx = (at(i + 1, j) - at(i, j)) / dx;
+    } else if (i == m_nx - 2) {
+        // one cell away from the right edge, average the change from one left to one right
+        dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * dx);
+    } else {
+        // normal case: average the change from the point before and after
+        dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * dx);
+    }
+
+    // estimate slope in Y using central differences, with basic fallbacks at the bottom/top edges
+    // (again, this is to guard against out of range/crashes
+    double dhdy;
+    if (j == 0) {
+        // at the very bottom edge, use the next point up to get slope
+        dhdy = (at(i, j + 1) - at(i, j)) / dy;
+    } else if (j == m_ny - 2) {
+        // one cell away from the top edge, average the change from one below to one above
+        dhdy = (at(i, j + 1) - at(i, j - 1)) / (2 * dy);
+    } else {
+        // normal case: average the change from the point below and above
+        dhdy = (at(i, j + 1) - at(i, j - 1)) / (2 * dy);
+    }
+
+    // normalise
+    ChVector3d n(-dhdx, -dhdy, 1.0);
+    n.Normalize();
+    normal = m_body->TransformDirectionLocalToParent(n);
+
+    // return positive for the hit
+    return true;
 }
 
 // -----------------------------------------------------------------------------

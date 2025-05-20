@@ -24,6 +24,7 @@
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtCEtriangleShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtPointShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtSegmentShape.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
 #include "chrono/collision/bullet/cbtBulletCollisionCommon.h"
 #include "chrono/collision/gimpact/GIMPACT/Bullet/cbtGImpactCollisionAlgorithm.h"
 #include "chrono/collision/gimpact/GIMPACTUtils/cbtGImpactConvexDecompositionShape.h"
@@ -216,6 +217,24 @@ void ChCollisionModelBullet::Populate() {
                 injectTriangleProxy(shape_triangle);
                 break;
             }
+            case ChCollisionShape::Type::HEIGHTFIELD: {
+                auto hf = std::static_pointer_cast<ChCollisionShapeHeightField>(shape);
+#if defined(BT_USE_DOUBLE_PRECISION)
+                auto* bt_hf = new cbtHeightfieldTerrainShape(
+                    hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeights(), hf->GetHeightScale(),
+                    hf->GetMinHeight(), hf->GetMaxHeight(), hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+#else
+                // single precision, use the getheightsfloat call to send correct array type to bullet
+                auto* bt_hf = new cbtHeightfieldTerrainShape(
+                    hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeightsFloat(), hf->GetHeightScale(),
+                    hf->GetMinHeight(), hf->GetMaxHeight(), hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+#endif
+                bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
+                                                 hf->GetFieldLength() / (hf->GetLengthSamples() - 1), 1.0f));
+                injectShape(shape, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
+                break;
+            }
+
             default:
                 // Shape type not supported
                 break;

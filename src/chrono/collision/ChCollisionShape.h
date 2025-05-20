@@ -49,6 +49,7 @@ class ChApi ChCollisionShape {
         PATH2D,       // 2D path (compound object)
         SEGMENT2D,    // line segment (part of a 2D path)
         ARC2D,        // circlular arc (part of a 2D path)
+        HEIGHTFIELD,    // bullet's height field collision shape - not implement in other collision systems
         UNKNOWN_SHAPE
     };
 
