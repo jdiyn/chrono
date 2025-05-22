@@ -45,6 +45,7 @@ software.
 #include "BulletCollision/CollisionShapes/cbtEmptyShape.h"
 #include "BulletCollision/CollisionShapes/cbtMultiSphereShape.h"
 #include "BulletCollision/CollisionShapes/cbtUniformScalingShape.h"
+#include "BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
 
 /// Narrowphase Collision Detector
 #include "BulletCollision/CollisionDispatch/cbtSphereSphereCollisionAlgorithm.h"
@@ -65,5 +66,10 @@ software.
 #include "LinearMath/cbtQuickprof.h"
 #include "LinearMath/cbtIDebugDraw.h"
 #include "LinearMath/cbtSerializer.h"
+
+
+#include "chrono/collision/bullet/BulletCollision/BroadphaseCollision/cbtBroadphaseProxy.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionDispatch/cbtConvexConcaveCollisionAlgorithm.h"
+
 
 #endif  // BULLET_COLLISION_COMMON_H

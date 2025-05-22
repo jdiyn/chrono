@@ -31,6 +31,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
                                                          float minHeight,
                                                          float maxHeight,
                                                          int upAxis,
+                                                         float sphere_radius,
                                                          bool flipQuadEdges)
     : ChCollisionShape(Type::UNKNOWN_SHAPE, material),
       m_nx(nx),
@@ -42,6 +43,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
       m_minHeight(minHeight),
       m_maxHeight(maxHeight),
       m_upAxis(upAxis),
+      sradius(sphere_radius),
       m_flipQuadEdges(flipQuadEdges) {
     m_type = Type::HEIGHTFIELD;
 
@@ -78,6 +80,7 @@ void ChCollisionShapeHeightField::ArchiveOut(ChArchiveOut& archive_out) {
     archive_out << CHNVP(m_minHeight);
     archive_out << CHNVP(m_maxHeight);
     archive_out << CHNVP(m_upAxis);
+    archive_out << CHNVP(sradius);
     archive_out << CHNVP(m_flipQuadEdges);
 }
 void ChCollisionShapeHeightField::ArchiveIn(ChArchiveIn& archive_in) {
@@ -95,6 +98,7 @@ void ChCollisionShapeHeightField::ArchiveIn(ChArchiveIn& archive_in) {
     archive_in >> CHNVP(m_minHeight);
     archive_in >> CHNVP(m_maxHeight);
     archive_in >> CHNVP(m_upAxis);
+    archive_in >> CHNVP(sradius);
     archive_in >> CHNVP(m_flipQuadEdges);
 }
 

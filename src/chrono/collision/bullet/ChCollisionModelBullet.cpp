@@ -219,22 +219,9 @@ void ChCollisionModelBullet::Populate() {
             }
             case ChCollisionShape::Type::HEIGHTFIELD: {
                 auto hf = std::static_pointer_cast<ChCollisionShapeHeightField>(shape);
-#if defined(BT_USE_DOUBLE_PRECISION)
-                auto* bt_hf = new cbtHeightfieldTerrainShape(
-                    hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeights(), hf->GetHeightScale(),
-                    hf->GetMinHeight(), hf->GetMaxHeight(), hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
-#else
-                // single precision, use the getheightsfloat call to send correct array type to bullet
-                auto* bt_hf = new cbtHeightfieldTerrainShape(
-                    hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeightsFloat(), hf->GetHeightScale(),
-                    hf->GetMinHeight(), hf->GetMaxHeight(), hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
-#endif
-                bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
-                                                 hf->GetFieldLength() / (hf->GetLengthSamples() - 1), 1.0f));
-                injectShape(shape, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
+                injectHeightfield(hf, frame);
                 break;
             }
-
             default:
                 // Shape type not supported
                 break;
@@ -371,6 +358,52 @@ void ChCollisionModelBullet::injectPath2D(std::shared_ptr<ChCollisionShapePath2D
         }
     }
 }
+
+void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeHeightField> hf,
+                                               const ChFrame<>& frame) {
+
+    auto safe_margin = GetSafeMargin(); // maybe not needed?
+    auto full_margin = GetSuggestedFullMargin();
+
+    // build the shape depending on the use of bt double precision or not (get heights different call)
+#if defined(BT_USE_DOUBLE_PRECISION)
+    auto* bt_hf = new cbtHeightfieldTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeights(),
+                                                 hf->GetHeightScale(), hf->GetMinHeight(), hf->GetMaxHeight(),
+                                                 hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+#else
+    auto* bt_hf = new cbtHeightfieldTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeightsFloat(),
+                                                 hf->GetHeightScale(), hf->GetMinHeight(), hf->GetMaxHeight(),
+                                                 hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+#endif
+
+    // scale into world?units
+    bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
+                                      hf->GetFieldLength() / (hf->GetLengthSamples() - 1), 1.0f));
+
+    // set the swept-sphere radius as both inward and outward margin (otherwise we miss all collisions)
+    model->SetSafeMargin(hf->GetRadius());
+    model->SetEnvelope(hf->GetRadius());
+    bt_hf->setMargin((cbtScalar)full_margin);
+
+        // ** 1) tell the Chrono model how big our swept?sphere really is **
+    double r = hf->GetRadius();
+    model->SetSafeMargin(r);
+    model->SetEnvelope(r);
+
+    // ** 2) only now compute the full margin and apply it to Bullet **
+    cbtScalar full_margin = GetSuggestedFullMargin();  // now = r + r
+    bt_hf->setMargin(full_margin);
+
+    // ** 3) update its local AABB so the broadphase picks up the new margin **
+    bt_hf->recalcLocalAabb();
+
+
+    // hand over
+    injectShape(hf, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
+    // For each btCollisionShape you create:
+    std::cout << "Shape type: " << bt_hf->getShapeType() << " (should be " << TERRAIN_SHAPE_PROXYTYPE << ")\n";
+}
+
 
 void ChCollisionModelBullet::injectConvexHull(std::shared_ptr<ChCollisionShapeConvexHull> shape_hull,
                                               const ChFrame<>& frame) {

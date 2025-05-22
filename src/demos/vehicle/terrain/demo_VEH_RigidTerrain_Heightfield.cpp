@@ -34,6 +34,9 @@
 #include "chrono_vehicle/terrain/RigidTerrain.h"
 #include "chrono_models/vehicle/hmmwv/HMMWV.h"
 
+#include "chrono/physics/ChBodyEasy.h"
+
+
 #include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
 #include "chrono_vehicle/visualization/ChVehicleVisualSystemIrrlicht.h"
 using namespace chrono::irrlicht;
@@ -143,7 +146,7 @@ int main(int argc, char* argv[]) {
     double terrainWidth = 100.0;  // eg. scale across 100m x 100m
     double terrainHeight = 100.0;
     int heightMapNx = 512, heightMapNy = 513;  // 513x513 resolution (higher resolutions still run fast - try 2049x2049 -irrlicht visual mesh is what's slow)
-    double heightAmp = 0.8;  // Scale the nooise-based height map to this height (m)
+    double heightAmp = 2;  // Scale the nooise-based height map to this height (m)
 
     // Create height map
     HeightMap heightMap(terrainWidth, terrainHeight, heightMapNx, heightMapNy, heightAmp);
@@ -152,13 +155,15 @@ int main(int argc, char* argv[]) {
     HMMWV_Full hmmwv;
     hmmwv.SetContactMethod(ChContactMethod::NSC);
     hmmwv.SetChassisFixed(false);
-    hmmwv.SetInitPosition(ChCoordsys<>(ChVector3d(5, 0, 0.75), QUNIT));
+    hmmwv.SetInitPosition(ChCoordsys<>(ChVector3d(5, 0, 2.75), ChQuaterniond(QuatFromAngleX(90))));
     hmmwv.SetEngineType(EngineModelType::SIMPLE);
     hmmwv.SetTransmissionType(TransmissionModelType::AUTOMATIC_SIMPLE_MAP);
     hmmwv.SetDriveType(DrivelineTypeWV::AWD);
     hmmwv.SetBrakeType(BrakeType::SHAFTS);
     hmmwv.SetTireType(TireModelType::TMEASY);
     hmmwv.SetTireStepSize(tire_step_size);
+    hmmwv.SetChassisCollisionType(CollisionType::PRIMITIVES);
+    hmmwv.SetCollisionSystemType(ChCollisionSystem::Type::BULLET);
     hmmwv.Initialize();
 
     hmmwv.SetChassisVisualizationType(VisualizationType::MESH);
@@ -169,10 +174,22 @@ int main(int argc, char* argv[]) {
 
     auto sys = hmmwv.GetSystem();
 
+
+    
+
+
     // Create the shared contact material for all patches
     auto patch_mat = chrono_types::make_shared<ChContactMaterialNSC>();
     patch_mat->SetFriction(0.9f);
     patch_mat->SetRestitution(0.01f);
+
+
+    auto my_obstacle = chrono_types::make_shared<ChBodyEasyBox>(1, 0.5, 1, 200, true, true, patch_mat);
+    sys->Add(my_obstacle);
+    my_obstacle->SetPos(ChVector3d(20, 2, 10));
+    my_obstacle->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/cubetexture_wood.png"));
+
+
 
     // Create the terrain
     RigidTerrain terrain(sys);
@@ -187,6 +204,7 @@ int main(int argc, char* argv[]) {
                                                 heightMap.getAllHeights(),                 // row major height array
                                                 heightMapNx, heightMapNy,     // full grid resolution
                                                 terrainWidth, terrainHeight,  // full terrain extents (Am x Bm)
+                                                0.1f,
                                                 true            // build chtrianglemesh visual shape
     );
 

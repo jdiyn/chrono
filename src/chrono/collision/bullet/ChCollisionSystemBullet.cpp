@@ -20,6 +20,7 @@
 #include "chrono/physics/ChBody.h"
 #include "chrono/physics/ChParticleCloud.h"
 #include "chrono/fea/ChMesh.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
 
 #include "chrono/collision/bullet/ChCollisionSystemBullet.h"
 #include "chrono/collision/bullet/ChCollisionModelBullet.h"
@@ -106,6 +107,48 @@ ChCollisionSystemBullet::ChCollisionSystemBullet() : m_debug_drawer(nullptr) {
 
     // custom collision for GIMPACT mesh case too
     cbtGImpactCollisionAlgorithm::registerAlgorithm(bt_dispatcher);
+
+// --- Begin: Terrain ? Convex registrations (heightfield vs any convex) ---
+    m_ccCreate = new cbtConvexConcaveCollisionAlgorithm::CreateFunc();
+    m_ccCreateSwapped = new cbtConvexConcaveCollisionAlgorithm::SwappedCreateFunc();
+
+    for (int proxy = BOX_SHAPE_PROXYTYPE; proxy < CONCAVE_SHAPES_END_HERE; ++proxy) {
+        // just in case someone ever moves TERRAIN into this range:
+        if (proxy == TERRAIN_SHAPE_PROXYTYPE)
+            continue;
+        // terrain (concave) vs convex
+        bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, proxy, m_ccCreate);
+        // convex vs terrain (swapped order)
+        bt_dispatcher->registerCollisionCreateFunc(proxy, TERRAIN_SHAPE_PROXYTYPE, m_ccCreateSwapped);
+    }
+    // --- End: Terrain ? Convex registrations ---
+
+    // --- Begin: Terrain ? TriangleMesh registrations (static & scaled & multimaterial) ---
+    cbtGImpactCollisionAlgorithm::registerAlgorithm(bt_dispatcher);
+
+    // static triangle mesh
+    auto* triAlgo = bt_collision_configuration->getCollisionAlgorithmCreateFunc(TERRAIN_SHAPE_PROXYTYPE,
+                                                                                TRIANGLE_MESH_SHAPE_PROXYTYPE);
+    bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, TRIANGLE_MESH_SHAPE_PROXYTYPE, triAlgo);
+    bt_dispatcher->registerCollisionCreateFunc(TRIANGLE_MESH_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE, triAlgo);
+
+    // scaled triangle mesh
+    auto* striAlgo = bt_collision_configuration->getCollisionAlgorithmCreateFunc(TERRAIN_SHAPE_PROXYTYPE,
+                                                                                 SCALED_TRIANGLE_MESH_SHAPE_PROXYTYPE);
+    bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, SCALED_TRIANGLE_MESH_SHAPE_PROXYTYPE, striAlgo);
+    bt_dispatcher->registerCollisionCreateFunc(SCALED_TRIANGLE_MESH_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE, striAlgo);
+
+    // multimaterial triangle mesh
+    auto* mmtriAlgo = bt_collision_configuration->getCollisionAlgorithmCreateFunc(
+        TERRAIN_SHAPE_PROXYTYPE, MULTIMATERIAL_TRIANGLE_MESH_PROXYTYPE);
+    bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, MULTIMATERIAL_TRIANGLE_MESH_PROXYTYPE,
+                                               mmtriAlgo);
+    bt_dispatcher->registerCollisionCreateFunc(MULTIMATERIAL_TRIANGLE_MESH_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE,
+                                               mmtriAlgo);
+
+    // --- End: Terrain ? TriangleMesh registrations ---
+
+
 }
 
 ChCollisionSystemBullet::~ChCollisionSystemBullet() {
@@ -124,6 +167,10 @@ ChCollisionSystemBullet::~ChCollisionSystemBullet() {
     delete m_collision_seg_arc;
     delete m_collision_arc_arc;
     delete m_collision_cetri_cetri;
+
+    delete m_ccCreate;
+    delete m_ccCreateSwapped;
+
     m_emptyCreateFunc->~cbtCollisionAlgorithmCreateFunc();
     cbtAlignedFree(m_tmp_mem);
 }
@@ -239,6 +286,7 @@ void ChCollisionSystemBullet::ReportContacts(ChContactContainer* mcontactcontain
         double marginA = icontact.modelA->GetSafeMargin();
         double marginB = icontact.modelB->GetSafeMargin();
 
+
         // Execute custom broadphase callback, if any
         bool do_narrow_contactgeneration = true;
         if (broad_callback)
@@ -286,9 +334,9 @@ void ChCollisionSystemBullet::ReportContacts(ChContactContainer* mcontactcontain
 
                     // Add to contact container
                     if (add_contact) {
-                        ////std::cout << " add indexA=" << indexA << " indexB=" << indexB << std::endl;
-                        ////std::cout << "     typeA=" << icontact.shapeA->m_type << " typeB=" <<
-                        /// icontact.shapeB->m_type << std::endl;
+                        std::cout << " add indexA=" << indexA << " indexB=" << indexB << std::endl;
+                        std::cout << "     typeA=" << icontact.shapeA->GetType() << " typeB=" <<
+                         icontact.shapeB->GetType() << std::endl;
 
                         mcontactcontainer->AddContact(icontact);
                     }

@@ -172,7 +172,8 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
         int grid_ny,                         ///< [in] resolution in Y
         double dimX,                         ///< [in] physical width along X (m)
         double dimY,                         ///< [in] physical width along Y (m)
-        bool vis);                           ///< [in] Generate a chtrianglemesh to represent the patch (false for Unity)
+        double sweep_sphere_radius = 0,      ///< [in] radius of sweep sphere
+        bool vis = false);                           ///< [in] Generate a chtrianglemesh to represent the patch (false for Unity)
 
 
     /// Initialize all defined terrain patches.

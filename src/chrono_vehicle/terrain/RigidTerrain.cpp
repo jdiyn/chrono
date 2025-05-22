@@ -850,6 +850,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
                                                                        int grid_ny,  // resolution in Y
                                                                        double dimX,  // physical width along X (m)
                                                                        double dimY,  // physical length along Y (m)
+                                                                       double sweep_sphere_radius,                                                                
                                                                        bool visualize) {
     using chrono_types::make_shared;
 
@@ -883,6 +884,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
                                                       1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
                                                       static_cast<float>(hmin), static_cast<float>(hmax),   // min and max heights (bullet takes floats)
                                                       2,                                                    // set upAxis as Z (i.e. 0,1,2 correspond to xyz)
+                                                      sweep_sphere_radius,                                 // swept sphere radius
                                                       true                          // flip?every?other quad (robust mesh)
         );
     patch->m_body->AddCollisionShape(hf_shape);

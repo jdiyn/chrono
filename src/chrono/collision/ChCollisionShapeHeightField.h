@@ -37,6 +37,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
                                 float minHeight,                                ///< [in] minimum height value (for AABB centering)
                                 float maxHeight,                                ///< [in] maximum height value (for AABB centering)
                                 int upAxis = 2,                                 ///< [in] 0 is X, 1 is Y, 2 is Z (height axis)
+                                float sphere_radius = 0.001f,                            ///< [in] swept sphere radius
                                 bool flipQuadEdges = true);                     ///< [in] default quad flips for robust uniformity to the mesh
 
     ~ChCollisionShapeHeightField() override {}
@@ -59,6 +60,10 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
 
     /// Override bounding box to encompass the full heightfield
     ChAABB GetBoundingBox() const override;
+
+    /// Return the thickness as the radius of a sphere-swept mesh.
+    double GetRadius() const { return sradius; }
+
         
     void ArchiveOut(ChArchiveOut& archive);
     void ArchiveIn(ChArchiveIn& archive);
@@ -74,6 +79,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     float                   m_heightScale, m_minHeight, m_maxHeight;
     int                     m_upAxis;
     bool                    m_flipQuadEdges;
+    float                   sradius;
 };
 
 
