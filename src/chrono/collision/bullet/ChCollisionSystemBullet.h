@@ -19,6 +19,10 @@
 #include "chrono/collision/bullet/ChCollisionModelBullet.h"
 #include "chrono/collision/bullet/cbtBulletCollisionCommon.h"
 
+
+#include "chrono/collision/bullet/BulletCollision/CollisionDispatch/cbtCollisionObjectWrapper.h"
+#include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtManifoldPoint.h"
+
 namespace chrono {
 
 // forward references

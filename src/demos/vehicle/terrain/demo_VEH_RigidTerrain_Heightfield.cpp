@@ -1,7 +1,7 @@
 // =============================================================================
 // PROJECT CHRONO - http://projectchrono.org
 //
-// Copyright (c) 2025 projectchrono.org
+// Copyright (c) 2014 projectchrono.org
 // All rights reserved.
 //
 // Use of this source code is governed by a BSD-style license that can be found
@@ -13,10 +13,12 @@
 // =============================================================================
 //
 // Demonstration of using heighfield RigidTerrain patches around a vehicle.
-// As an example, a perlin noise heightmap is generated as an array.
+// As an example, a perlin noise heightmap is generated as an array (could import
+// from a file if desired..
 // The Heightfield patch type uses a y=0 bottom approach, and can be used 
 // with Unity/Unreal terrain types.
-// Note: Visual mesh generation is the primary performance bottleneck
+// Note: Visual mesh generation is the primary performance bottleneck so 
+// RigidTerrain patches are limited to 256x256 resolution for the visual mesh
 //
 // =============================================================================
 
@@ -36,9 +38,11 @@
 
 #include "chrono/physics/ChBodyEasy.h"
 
-
 #include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
 #include "chrono_vehicle/visualization/ChVehicleVisualSystemIrrlicht.h"
+//    #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
+
+
 using namespace chrono::irrlicht;
 
 using namespace chrono;
@@ -139,30 +143,33 @@ class HeightMap {
 int main(int argc, char* argv[]) {
     std::cout << "Copyright (c) 2025 projectchrono.org\nChrono version: " << CHRONO_VERSION << std::endl;
 
-    double step_size = 2e-3;
-    double tire_step_size = 2e-3;
+    double step_size = 1e-3;
+    double tire_step_size = 1e-3;
 
     // Height map params
-    double terrainWidth = 100.0;  // eg. scale across 100m x 100m
-    double terrainHeight = 100.0;
-    int heightMapNx = 512, heightMapNy = 513;  // 513x513 resolution (higher resolutions still run fast - try 2049x2049 -irrlicht visual mesh is what's slow)
-    double heightAmp = 2;  // Scale the nooise-based height map to this height (m)
+    double terrainWidth = 100;  // eg. scale across 100m x 100m
+    double terrainHeight = 100;
+    int heightMapNx = 1024,
+        heightMapNy = 1024;  // note: irrlicht visual mesh for this patch is capped to 512 x 512 to prevent slowdown caused by rendering the mesh
+    double heightAmp = 4.5;  // Scale the noise-based height map to this height (total)
 
     // Create height map
     HeightMap heightMap(terrainWidth, terrainHeight, heightMapNx, heightMapNy, heightAmp);
 
+        
     // Create vehicle
     HMMWV_Full hmmwv;
     hmmwv.SetContactMethod(ChContactMethod::NSC);
     hmmwv.SetChassisFixed(false);
-    hmmwv.SetInitPosition(ChCoordsys<>(ChVector3d(5, 0, 2.75), ChQuaterniond(QuatFromAngleX(90))));
+    hmmwv.SetInitPosition(ChCoordsys<>(ChVector3d(3, 0, 2.75), QuatFromAngleX(65)));
     hmmwv.SetEngineType(EngineModelType::SIMPLE);
     hmmwv.SetTransmissionType(TransmissionModelType::AUTOMATIC_SIMPLE_MAP);
     hmmwv.SetDriveType(DrivelineTypeWV::AWD);
     hmmwv.SetBrakeType(BrakeType::SHAFTS);
     hmmwv.SetTireType(TireModelType::TMEASY);
     hmmwv.SetTireStepSize(tire_step_size);
-    hmmwv.SetChassisCollisionType(CollisionType::PRIMITIVES);
+    hmmwv.SetChassisCollisionType(CollisionType::MESH);
+    
     hmmwv.SetCollisionSystemType(ChCollisionSystem::Type::BULLET);
     hmmwv.Initialize();
 
@@ -174,21 +181,30 @@ int main(int argc, char* argv[]) {
 
     auto sys = hmmwv.GetSystem();
 
-
-    
-
-
     // Create the shared contact material for all patches
     auto patch_mat = chrono_types::make_shared<ChContactMaterialNSC>();
     patch_mat->SetFriction(0.9f);
     patch_mat->SetRestitution(0.01f);
 
-
-    auto my_obstacle = chrono_types::make_shared<ChBodyEasyBox>(1, 0.5, 1, 200, true, true, patch_mat);
+    // add a box for testing
+    auto my_obstacle = chrono_types::make_shared<ChBodyEasyBox>(1, 0.5, 1, 1000, true, true, patch_mat);
     sys->Add(my_obstacle);
-    my_obstacle->SetPos(ChVector3d(20, 2, 10));
+    my_obstacle->SetPos(ChVector3d(3, -3, 1));
+    my_obstacle->SetRot(QuatFromAngleX(30));
     my_obstacle->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/cubetexture_wood.png"));
 
+    // add a sphere for testing
+    auto my_obstacle2 = chrono_types::make_shared<ChBodyEasySphere>(1, 100, true, true, patch_mat);
+    sys->Add(my_obstacle2);
+    my_obstacle2->SetPos(ChVector3d(6, 0, 5));
+    my_obstacle2->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/spheretexture.png"));
+
+
+    sys->SetNumThreads(3,4,8);
+    //sys->SetSolverType(ChSolver::Type::BARZILAIBORWEIN); // slightly faster
+    //auto solver = sys->GetSolver();
+    //solver->AsIterative()->EnableWarmStart(true);
+    //solver->AsIterative()->SetMaxIterations(100);  // 50 iterations is enough for this demo
 
 
     // Create the terrain
@@ -198,16 +214,33 @@ int main(int argc, char* argv[]) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Use the entire height map for one large patch
-    auto heights = heightMap.getAllHeights();
-    auto dynPatch = terrain.AddPatch(patch_mat,                                 // NSC or SMC material
-                                                ChCoordsys<>(ChVector3d(0, 0, 0), QUNIT),  // patch body at world origin, no rotation
-                                                heightMap.getAllHeights(),                 // row major height array
-                                                heightMapNx, heightMapNy,     // full grid resolution
-                                                terrainWidth, terrainHeight,  // full terrain extents (Am x Bm)
-                                                0.1f,
-                                                true            // build chtrianglemesh visual shape
-    );
+    //auto heights = heightMap.getAllHeights();
+    //auto dynPatch = terrain.AddPatch(patch_mat,                                 // NSC or SMC material
+    //                                            ChCoordsys<>(ChVector3d(0, 0, 0), QUNIT),  // patch body at world origin, no rotation
+    //                                            heightMap.getAllHeights(),                 // row major height array
+    //                                            heightMapNx, heightMapNy,     // full grid resolution
+    //                                            terrainWidth, terrainHeight,  // full terrain extents (Am x Bm)
+    //                                            0.001f,
+    //                                            true            // build chtrianglemesh visual shape
+    //);
 
+    // -----------------------------------------------------------------------------
+    // replace the old Perlin-heightfield call with the new j = 0 image overload
+    // -----------------------------------------------------------------------------
+    std::string heightmap_file = GetChronoDataFile("vehicle/terrain/height_maps/terrain3.bmp"); // other terrain works but terrain3 flat spots are causing issues
+    double hMin = -heightAmp * 0.5;  // map black is -amplitude
+    double hMax = heightAmp * 0.5;   // map white up to +amplitude
+
+    auto dynPatch = terrain.AddPatch(patch_mat, ChCoordsys<>(ChVector3d(0, 0, 0), QUNIT),  // patch at world origin
+                                     heightmap_file,                                       // grayscale height-map
+                                     terrainWidth, terrainHeight,                          // physical X/Y extents (m)
+                                     hMin, hMax,                                           // height range (m)
+                                     0.001f,                                                // swept-sphere radius
+                                     true);                                                // build visual mesh
+
+
+
+    dynPatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
     // Initialize terrain
     terrain.Initialize();
     // timer ouput
@@ -223,6 +256,7 @@ int main(int argc, char* argv[]) {
     driver.Initialize();
 
     // Create visualisation sys - Irrlicht
+    // TODO - shift to VSG for faster vis of high res terrain
     ChVisualSystem::Type vis_type = ChVisualSystem::Type::IRRLICHT;
 
     std::shared_ptr<ChVehicleVisualSystem> vis;
@@ -237,6 +271,7 @@ int main(int argc, char* argv[]) {
     v->AttachDriver(&driver);
     vis = v;
     hmmwv.GetVehicle().EnableRealtime(true);
+    ///////////////////////////////////////////////////
 
     // Sim loop
     while (vis->Run()) {
@@ -257,6 +292,7 @@ int main(int argc, char* argv[]) {
         hmmwv.Advance(step_size);
 
         vis->Advance(step_size);
+        
     }
 
     return 0;

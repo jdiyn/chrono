@@ -9,7 +9,7 @@
 // http://projectchrono.org/license-chrono.txt.
 //
 // =============================================================================
-// Authors: Radu Serban
+// Authors: Radu Serban, Josh Diyn
 // =============================================================================
 //
 // Rigid terrain
@@ -841,8 +841,8 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 }
 
 
-//----------------------------------------------------------
-//  Heightfield patch
+//----------------------------------------------------------------------------------------------
+//  Heightfield patch, j=0 type - note heights are entered directly, not scaled [0..1] type.
 std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
                                                                        const ChCoordsys<>& pos,            // patch coord
                                                                        const std::vector<double>& heights, // height array - j=0 is BOTTOM of field
@@ -862,7 +862,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     AddPatch(patch, pos, material);
 
     // copy and validate heights, set min/max with double precision
-    // note - use double, bu if use_bullet_double is not set, the heightfield class handles conversion in a macro block
+    // note - use double, but if use_bullet_double is not set, the heightfield class handles conversion in a macro block
     // For simplicity, chrono is kept at double
     int nx = grid_nx;
     int ny = grid_ny;
@@ -877,19 +877,28 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
         hmax = std::max(hmax, h);
     }
 
+    // get the world up
+    ChVector3d v = ChWorldFrame::Vertical();
+    // convert to a bullet up axis (0,1,2) - i.e. 0=x, 1=y, 2=z
+    int upAxis = (std::fabs(v.x()) > std::fabs(v.y()) && std::fabs(v.x()) > std::fabs(v.z())) ? 0
+                 : (std::fabs(v.y()) > std::fabs(v.z()))                                      ? 1
+                                                         /* remainder is Z=2 */               : 2;
+
+
     // build a single btHeightfieldTerrainShape
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
                                                       dimX, dimY,                    // field extent along X/Y
                                                       hf_heights,                    // row-major double array, j=0 is the bottom row!!! Also, double input
                                                       1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
-                                                      static_cast<float>(hmin), static_cast<float>(hmax),   // min and max heights (bullet takes floats)
-                                                      2,                                                    // set upAxis as Z (i.e. 0,1,2 correspond to xyz)
-                                                      sweep_sphere_radius,                                 // swept sphere radius
-                                                      true                          // flip?every?other quad (robust mesh)
+                                                      static_cast<float>(hmin),
+                                                      static_cast<float>(hmax),      // min and max heights (may be unecesary with custom bullet heightfield)
+                                                      upAxis,                        // set upAxis as 0,1,2 correspond to xyz
+                                                      sweep_sphere_radius,           // swept sphere radius
+                                                      true                           // flip every other quad (robust mesh)
         );
     patch->m_body->AddCollisionShape(hf_shape);
 
-    // store parameters for recall with findpoint()
+    // store parameters for recall
     patch->m_nx = nx;
     patch->m_ny = ny;
     patch->m_width = dimX;
@@ -897,6 +906,64 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     patch->m_heights = std::move(hf_heights);   // easy grab the height data across to the member data
     return patch;
 }
+
+
+
+// -----------------------------------------------------------------------------
+// Heightfield patch, built from image j=0 bottom heightfield overload (image file)
+std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
+                                                            const ChCoordsys<>& pos,
+                                                            const std::string& heightmap_file,
+                                                            double sizeX,
+                                                            double sizeY,
+                                                            double hMin,
+                                                            double hMax,
+                                                            double sweep_radius,
+                                                            bool visualize) {
+    // Load grayscale image
+    STB img;
+    if (!img.ReadFromFile(heightmap_file, 1))
+        throw std::runtime_error("RigidTerrain::AddPatch : cannot open height?map '" + heightmap_file + "'");
+
+    const int nx = img.GetWidth();
+    const int ny = img.GetHeight();
+    const double scale = (hMax - hMin) / img.GetRange();
+
+    // Compute centre as bullet heightfield expects heights to be centered around 0.0
+    double centre = 0.5 * (hMin + hMax);
+
+    // Build bottom ro first height vector (centered)
+    std::vector<double> heights;
+    heights.reserve(nx * ny);
+    for (int j = ny - 1; j >= 0; --j) {
+        for (int i = 0; i < nx; ++i) {
+            heights.emplace_back(hMin + img.Gray(i, j) * scale - centre);
+        }
+    }
+    // Adjust min/max that were given to account for centreing
+    hMin -= centre;
+    hMax -= centre;
+
+    //// Quick grid-coverage check: every i,j slot must hold a finite value
+    //for (int j = 0; j < ny; ++j)
+    //    for (int i = 0; i < nx; ++i) {
+    //        const double h = heights[j * nx + i];
+    //        if (!std::isfinite(h))
+    //            throw std::runtime_error("Heightfield hole at (" + std::to_string(i) + "," + std::to_string(j) + ")");
+    //    }
+
+
+    // Call the existing heightfield AddPatch function with the heights and args
+    auto patch = AddPatch(material, pos, heights, nx, ny, sizeX, sizeY, sweep_radius, visualize);
+
+    // set the name - todo
+    //auto mesh_name = filesystem::path(heightmap_file).stem();
+    //patch-> = mesh_name;
+
+    return patch;
+}
+
+
 
 // -----------------------------------------------------------------------------
 // Functions to modify properties of a patch
@@ -1029,12 +1096,30 @@ void RigidTerrain::MeshPatch::Initialize() {
 
 void RigidTerrain::HeightFieldPatch::Initialize() {
     // if visual bool set, generated a basic trimesh for viewing
+    // note that irrlicht will not support a 2048x2048 visual mesh
+    // would need to be split into 512x512 or 1024x1024 tiles for rendering.
+    // Since the heightfield is likely used with Unity/Unreal, this isn't expected to be an issue
+    // instead, this is purely provided for limited non-unity/unreal vis purposes.
     if (m_visualize) {
-        int nx = m_nx;
-        int ny = m_ny;
+        // --- LIMIT VISUAL MESH RESOLUTION ---
+        // TODO: test on VSG if it needs this limit
+        int max_visual_res = 512;
+        int nx = std::min(m_nx, max_visual_res);
+        int ny = std::min(m_ny, max_visual_res);
+
+        // Subsample heights to (nx x ny)
+        std::vector<double> H_vis(nx * ny);
+        for (int j = 0; j < ny; ++j) {
+            int src_j = (m_ny == ny) ? j : int(double(j) * (m_ny - 1) / double(ny - 1));
+            for (int i = 0; i < nx; ++i) {
+                int src_i = (m_nx == nx) ? i : int(double(i) * (m_nx - 1) / double(nx - 1));
+                H_vis[j * nx + i] = m_heights[src_j * m_nx + src_i];
+            }
+        }
+        auto& H = H_vis;  // row-major, j=0 at bottom!! important to send data in with correct ordering
+
         double W = m_width;
         double L = m_length;
-        auto& H = m_heights;  // row-major, j=0 at bottom!! important to send data in with correct ordering
 
         // set Z offset so visual matches Bullet's centered AABB
         double hmin = H[0], hmax = H[0];
@@ -1090,8 +1175,8 @@ void RigidTerrain::HeightFieldPatch::Initialize() {
                     idx[f++] = ChVector3i(v0, v1, v2);
                     idx[f++] = ChVector3i(v1, v3, v2);
                     // accumulate normals
-                    auto n1 = Vcross(V[v2] - V[v0], V[v1] - V[v0]).GetNormalized();
-                    auto n2 = Vcross(V[v3] - V[v1], V[v2] - V[v1]).GetNormalized();
+                    auto n1 = Vcross(V[v2] - V[v0], V[v1] - V[v0]);
+                    auto n2 = Vcross(V[v3] - V[v1], V[v2] - V[v1]);
                     N[v0] += n1;
                     N[v2] += n1;
                     N[v1] += n1 + n2;
@@ -1101,8 +1186,8 @@ void RigidTerrain::HeightFieldPatch::Initialize() {
                     idx[f++] = ChVector3i(v0, v3, v2);
                     idx[f++] = ChVector3i(v0, v1, v3);
                     // accumulate normals
-                    auto n1 = Vcross(V[v3] - V[v0], V[v2] - V[v0]).GetNormalized();
-                    auto n2 = Vcross(V[v1] - V[v0], V[v3] - V[v0]).GetNormalized();
+                    auto n1 = Vcross(V[v3] - V[v0], V[v2] - V[v0]);
+                    auto n2 = Vcross(V[v1] - V[v0], V[v3] - V[v0]);
                     N[v0] += n1 + n2;
                     N[v3] += n1 + n2;
                     N[v2] += n1;
@@ -1283,84 +1368,16 @@ bool RigidTerrain::MeshPatch::FindPoint(const ChVector3d& loc, double& height, C
     return result.hit;
 }
 
-// height and normal determined with bilinear interpolation; expects H[j=0] at bottom (that's how bullet expects it also)
 bool RigidTerrain::HeightFieldPatch::FindPoint(const ChVector3d& loc, double& height, ChVector3d& normal) const {
-    // transform world point into local
-    ChVector3d lp = m_body->TransformPointParentToLocal(loc);
+    auto hf_shape =
+        std::static_pointer_cast<ChCollisionShapeHeightField>(m_body->GetCollisionModel()->GetShapeInstance(0).shape);
+    // get the world up
+    ChVector3d v = ChWorldFrame::Vertical();
 
-    // normalized coords u[0,1] v[0,1] over X,Y
-    double u = (lp.x() + m_width / 2) / m_width;
-    double v = (lp.y() + m_length / 2) / m_length;
-    // reject anything outside [0,1]
-    if (u < 0 || u >= 1 || v < 0 || v >= 1)
-        return false;
-
-    // map to cell coords in [0 … nx?1], [0 … ny?1]
-    double fx = u * (m_nx - 1);
-    double fy = v * (m_ny - 1);
-    int i = int(std::floor(fx));
-    int j = int(std::floor(fy));
-    // clamp to ensure i+1 ? nx?1, j+1 ? ny?1
-    i = std::min(std::max(i, 0), m_nx - 2);
-    j = std::min(std::max(j, 0), m_ny - 2);
-    double tx = fx - i;
-    double ty = fy - j;
-
-    // fetch corner heights (row-major, j=0 at bottom!!!!!!!!!!)
-    auto at = [&](int ii, int jj) { return m_heights[jj * m_nx + ii]; };
-    float h00 = at(i, j);
-    float h10 = at(i + 1, j);
-    float h01 = at(i, j + 1);
-    float h11 = at(i + 1, j + 1);
-
-    // bilinear interp
-    float h0 = h00 * (1 - tx) + h10 * tx;
-    float h1 = h01 * (1 - tx) + h11 * tx;
-    float hf = h0 * (1 - ty) + h1 * ty;
-
-    // world-space height
-    height = ChWorldFrame::Height(ChVector3d(lp.x(), lp.y(), hf));
-    //-----------------------
-    // get the slope of the heightfield, but ensure we don't crash when vehicle is outside the patch
-    // ----------------------
-    // Compute local grid spacings on the fly
-    double dx = m_width / double(m_nx - 1);
-    double dy = m_length / double(m_ny - 1);
-    // estimate slope in X using central differences, with simple fallbacks at the left/right edges
-    double dhdx;
-    if (i == 0) {
-        // at the very left edge, use the next point over to get slope
-        dhdx = (at(i + 1, j) - at(i, j)) / dx;
-    } else if (i == m_nx - 2) {
-        // one cell away from the right edge, average the change from one left to one right
-        dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * dx);
-    } else {
-        // normal case: average the change from the point before and after
-        dhdx = (at(i + 1, j) - at(i - 1, j)) / (2 * dx);
-    }
-
-    // estimate slope in Y using central differences, with basic fallbacks at the bottom/top edges
-    // (again, this is to guard against out of range/crashes
-    double dhdy;
-    if (j == 0) {
-        // at the very bottom edge, use the next point up to get slope
-        dhdy = (at(i, j + 1) - at(i, j)) / dy;
-    } else if (j == m_ny - 2) {
-        // one cell away from the top edge, average the change from one below to one above
-        dhdy = (at(i, j + 1) - at(i, j - 1)) / (2 * dy);
-    } else {
-        // normal case: average the change from the point below and above
-        dhdy = (at(i, j + 1) - at(i, j - 1)) / (2 * dy);
-    }
-
-    // normalise
-    ChVector3d n(-dhdx, -dhdy, 1.0);
-    n.Normalize();
-    normal = m_body->TransformDirectionLocalToParent(n);
-
-    // return positive for the hit
-    return true;
+    // faster -  touches four height samples per find for bilinear ops to get height and normal and bool hit (not really a 'ray' hit)
+    return hf_shape->RayHit(m_body->GetFrameRefToAbs().GetCoordsys(), loc, v, height, normal);
 }
+
 
 // -----------------------------------------------------------------------------
 // Export all patch meshes

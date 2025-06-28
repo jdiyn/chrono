@@ -24,7 +24,8 @@
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtCEtriangleShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtPointShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtSegmentShape.h"
-#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldChronoTerrainShape.h" // use custom chrono heightfield shape
+
 #include "chrono/collision/bullet/cbtBulletCollisionCommon.h"
 #include "chrono/collision/gimpact/GIMPACT/Bullet/cbtGImpactCollisionAlgorithm.h"
 #include "chrono/collision/gimpact/GIMPACTUtils/cbtGImpactConvexDecompositionShape.h"
@@ -361,47 +362,52 @@ void ChCollisionModelBullet::injectPath2D(std::shared_ptr<ChCollisionShapePath2D
 
 void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeHeightField> hf,
                                                const ChFrame<>& frame) {
+                                                                       
+    // get swept - sphere margin is
+    double r = hf->GetRadius();
+    // don't set these for heightfield
+    //   model->SetSafeMargin(r);
+    //   model->SetEnvelope(r);
 
-    auto safe_margin = GetSafeMargin(); // maybe not needed?
-    auto full_margin = GetSuggestedFullMargin();
-
-    // build the shape depending on the use of bt double precision or not (get heights different call)
+    // build the custome heightfield shape
 #if defined(BT_USE_DOUBLE_PRECISION)
-    auto* bt_hf = new cbtHeightfieldTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeights(),
+    cbtHeightfieldChronoTerrainShape* bt_hf =
+        new cbtHeightfieldChronoTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(),
+                                                 hf->GetHeights(),  // use double array
                                                  hf->GetHeightScale(), hf->GetMinHeight(), hf->GetMaxHeight(),
-                                                 hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+                                                 hf->GetUpAxis(), hf->GetFlipQuadEdges());
 #else
-    auto* bt_hf = new cbtHeightfieldTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(), hf->GetHeightsFloat(),
+    cbtHeightfieldChronoTerrainShape* bt_hf =
+        new cbtHeightfieldChronoTerrainShape(hf->GetWidthSamples(), hf->GetLengthSamples(),
+                                                 hf->GetHeightsFloat(),  // use float array
                                                  hf->GetHeightScale(), hf->GetMinHeight(), hf->GetMaxHeight(),
-                                                 hf->GetUpAxis(), PHY_FLOAT, hf->GetFlipQuadEdges());
+                                                 hf->GetUpAxis(), hf->GetFlipQuadEdges());
 #endif
 
-    // scale into world?units
+    // may not need this now that heightfield is a custom approach using bilinear interp.
+    bt_hf->setUseDiamondSubdivision(true);
+
+    // put it into world scale units: spacing between samples on X and Y
     bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
                                       hf->GetFieldLength() / (hf->GetLengthSamples() - 1), 1.0f));
 
-    // set the swept-sphere radius as both inward and outward margin (otherwise we miss all collisions)
-    model->SetSafeMargin(hf->GetRadius());
-    model->SetEnvelope(hf->GetRadius());
-    bt_hf->setMargin((cbtScalar)full_margin);
+    // apply margin in one go
+    cbtScalar full_margin = GetSuggestedFullMargin();
+    // set narrowphase margin to 0
+    bt_hf->setMargin(r); // Ensure this is set so that objects DONT sink through the heightfield
 
-        // ** 1) tell the Chrono model how big our swept?sphere really is **
-    double r = hf->GetRadius();
-    model->SetSafeMargin(r);
-    model->SetEnvelope(r);
+    bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up
 
-    // ** 2) only now compute the full margin and apply it to Bullet **
-    cbtScalar full_margin = GetSuggestedFullMargin();  // now = r + r
-    bt_hf->setMargin(full_margin);
+    
+    this->bt_collision_object->setCollisionShape(bt_hf);
 
-    // ** 3) update its local AABB so the broadphase picks up the new margin **
-    bt_hf->recalcLocalAabb();
+    this->bt_collision_object->setCollisionFlags(this->bt_collision_object->getCollisionFlags() |
+                                                 cbtCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
 
-
-    // hand over
+    // hand off to the normal inject routine
     injectShape(hf, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
-    // For each btCollisionShape you create:
-    std::cout << "Shape type: " << bt_hf->getShapeType() << " (should be " << TERRAIN_SHAPE_PROXYTYPE << ")\n";
+
+
 }
 
 

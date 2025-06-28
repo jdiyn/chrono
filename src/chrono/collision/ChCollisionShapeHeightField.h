@@ -26,18 +26,26 @@ namespace chrono {
 /// A heightfield collision shape.  Under Bullet, this becomes a btHeightfieldTerrainShape.
 class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
   public:
+
+    /// World space query: returns true if the point projects inside the patch
+    bool SampleWorld(const ChCoordsys<>& patchFrame,  // body/patch frame
+                     const ChVector3d& worldPos,      // query point
+                     double& heightOut,               // abs world height on HF
+                     ChVector3d& normalOut) const;
+
+    ChCollisionShapeHeightField();
     /// Construct from a regular grid of heights.
     ChCollisionShapeHeightField(std::shared_ptr<ChContactMaterial> material,    ///< [in] contact material
                                 int nx,                                         ///< [in] number of height samples along X
                                 int ny,                                         ///< [in] number of height samples along Y
                                 double dimX,                                    ///< [in] physical width along X (meters)
                                 double dimY,                                    ///< [in] physical length along Y (meters)
-                                const std::vector<double>& heights,             ///< [in] height array (row-major: j*nx + i), must be float
-                                float heightScale,                              ///< [in] multiplier applied to raw height values - needed for any integer-based heightfield data types
-                                float minHeight,                                ///< [in] minimum height value (for AABB centering)
-                                float maxHeight,                                ///< [in] maximum height value (for AABB centering)
+                                const std::vector<double>& heights,             ///< [in] height array (row-major: j*nx + i) ---- always double input, if single bullet, gets coverted in constructor
+                                float heightScale,                              ///< [in] multiplier applied to raw height values
+                                float minHeight,                                ///< [in] minimum height value (for AABB centring)
+                                float maxHeight,                                ///< [in] maximum height value (for AABB centring)
                                 int upAxis = 2,                                 ///< [in] 0 is X, 1 is Y, 2 is Z (height axis)
-                                float sphere_radius = 0.001f,                            ///< [in] swept sphere radius
+                                float sphere_radius = 0.001f,                   ///< [in] swept sphere radius
                                 bool flipQuadEdges = true);                     ///< [in] default quad flips for robust uniformity to the mesh
 
     ~ChCollisionShapeHeightField() override {}
@@ -49,7 +57,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     double            GetFieldLength()    const { return m_length; }
     const double* GetHeights() const { return m_heights.data(); }
 #ifndef BT_USE_DOUBLE_PRECISION
-    // Bullet is single precision
+    // if bullet is single precision
     const float* GetHeightsFloat() const { return m_heights_f.data(); }
 #endif
     float             GetHeightScale()    const { return m_heightScale; }
@@ -64,6 +72,13 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     /// Return the thickness as the radius of a sphere-swept mesh.
     double GetRadius() const { return sradius; }
 
+    /// Calculate the height of the patch at the given position and return the height and normal vector
+    bool RayHit(const ChCoordsys<>& patch_frame,    ///< [in] body/patch frame
+                const ChVector3d& query_pos,        ///< [in] query position in world space
+                const ChVector3d& world_up,         ///< [in] world up vector (usually Z)
+                double& out_height,                 ///< [out] height at the query position (in world space)
+                ChVector3d& out_normal) const;      ///< [out] normal at the query position (in world space)
+
         
     void ArchiveOut(ChArchiveOut& archive);
     void ArchiveIn(ChArchiveIn& archive);
@@ -72,6 +87,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
   private:
     int                     m_nx, m_ny;
     double                  m_width, m_length;
+    double m_heightCentre;  // (minH+maxH)/2
     std::vector<double>     m_heights;
 #ifndef BT_USE_DOUBLE_PRECISION
     std::vector<float>      m_heights_f; // float array if not using chrono's bullet double setup
@@ -80,6 +96,12 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     int                     m_upAxis;
     bool                    m_flipQuadEdges;
     float                   sradius;
+
+    // Precompute cell sizes (metres) and reciprocals to trasnlate to from the grid
+    double m_cellSizeU;  // width  /(nx1)
+     double m_cellSizeV;      // length /(ny1)
+     double m_invCellSizeU;   // 1/m_cellSizeU
+     double m_invCellSizeV;   // 1/m_cellSizeV
 };
 
 
