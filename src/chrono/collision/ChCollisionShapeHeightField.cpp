@@ -50,13 +50,16 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
       m_flipQuadEdges(flipQuadEdges) {
     m_type = Type::HEIGHTFIELD;
 
+        // store the vertical centre that bullet does so SampleHeight can restore absolute heights correctly
+    m_heightCentre = 0.5 * (m_minHeight + m_maxHeight);
+
     // if not using double precision, setup for bullet a float array
     // the alternative option is to set up a use of the cbtScalar, but dont want bullet headers here
     // as it becomes limiting to the multicore system only
 #ifndef BT_USE_DOUBLE_PRECISION
     m_heights_f.resize(heights.size());
     for (size_t i = 0; i < heights.size(); ++i) {
-        m_heights_f[i] = static_cast<float>(heights[i]);
+        m_heights_f[i] = static_cast<float>(heights[i] - m_heightCentre); // centre for bullet shape
     }
 #endif
 
@@ -66,8 +69,6 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
     m_invCellSizeU = 1.0 / m_cellSizeU;
     m_invCellSizeV = 1.0 / m_cellSizeV;
 
-    // store the vertical centre that bullet does so SampleHeight can restore absolute heights correctly
-    m_heightCentre = 0.5 * (m_minHeight + m_maxHeight);
 }
 
 ChAABB ChCollisionShapeHeightField::GetBoundingBox() const {
@@ -88,105 +89,118 @@ bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
     // Transform the query point to the shape local frame
     ChVector3d p_local = frame.TransformPointParentToLocal(query_pos);
 
-    // NB:  In a purely Chrono context the heightfield is not subject to an
-    // additional bulletstyle local scaling, so there's no need for inverse
-    // scaling like in the bullet class. Height field values are stored directly
-
-    // Convert to planar (u,v) coordinates according to upaxis
-    double u, v;  // metres in the heightfield plane
+    // Convert to planar (u,v) coordinates according to up-axis (in meters, centered)
+    double u, v;
     switch (m_upAxis) {
-        case 0:
+        case 0:  // X-up
             u = p_local.y();
             v = p_local.z();
             break;
-        case 1:
+        case 1:  // Y-up
             u = p_local.x();
             v = p_local.z();
             break;
-        default:
+        default:  // Z-up
             u = p_local.x();
             v = p_local.y();
             break;
     }
 
-    // Rectangle bounds check (halfwidth / halflength)
-    // false if we're outside the patch
-    if (std::fabs(u) > 0.5 * m_width || std::fabs(v) > 0.5 * m_length)
-        return false;
+    // Check if query projects inside the patch rectangle (half-width/length bounds)
+    double half_width = 0.5 * m_width;
+    double half_length = 0.5 * m_length;
+    if (std::fabs(u) > half_width || std::fabs(v) > half_length) {
+        return false;  // Outside patch
+    }
 
-    // bilinear height evaluation
-    const double fx = (u + 0.5 * m_width) * m_invCellSizeU;  // grid coord
-    const double fy = (v + 0.5 * m_length) * m_invCellSizeV;
+    // Convert to grid coordinates (fractional)
+    double fx = (u + half_width) * m_invCellSizeU;
+    double fy = (v + half_length) * m_invCellSizeV;
 
-    int i = (int)fx;
-    int j = (int)fy;
+    int i = static_cast<int>(fx);
+    int j = static_cast<int>(fy);
     double tx = fx - i;
     double ty = fy - j;
 
-    // clamp on right/top border
-    if (i >= m_nx - 1) {
-        i = m_nx - 2;
+    // Clamp to valid grid indices (prevent out-of-bounds)
+    i = std::clamp(i, 0, m_nx - 2);
+    j = std::clamp(j, 0, m_ny - 2);
+    if (tx > 1.0)
         tx = 1.0;
-    }
-    if (j >= m_ny - 1) {
-        j = m_ny - 2;
+    if (ty > 1.0)
         ty = 1.0;
-    }
 
+    // Lambda for raw height access (scaled by m_heightScale, which is 1.0)
     auto H = [&](int ix, int iy) { return m_heights[iy * m_nx + ix] * m_heightScale; };
 
+    // Fetch corner heights (raw, not centered)
     const double h00 = H(i, j);
     const double h10 = H(i + 1, j);
     const double h01 = H(i, j + 1);
     const double h11 = H(i + 1, j + 1);
 
+    // Bilinear interpolation for height (raw height)
     const double h0 = h00 + tx * (h10 - h00);
     const double h1 = h01 + tx * (h11 - h01);
-    const double h = h0 + ty * (h1 - h0);  // bilinear height
+    const double h = h0 + ty * (h1 - h0);
 
-    // Gradient dH/du, dH/dv  (cell constant central difference). remember the inverse cell size handled in constructor
-    // cannot be changed afterwards
+    // Gradients for normal (central differences, scaled by cell size)
     const double dhdu = (h10 - h00 + h11 - h01) * 0.5 * m_invCellSizeU;
     const double dhdv = (h01 - h00 + h11 - h10) * 0.5 * m_invCellSizeV;
 
-    // Build local normal (unscaled, because Chrono HF stores height directly)
-    ChVector3d n_local;
-    switch (m_upAxis) {
-        case 0:
-            n_local.Set(1.0, -dhdu, -dhdv);
-            break;
-        case 1:
-            n_local.Set(-dhdu, 1.0, -dhdv);
-            break;
-        default:
-            n_local.Set(-dhdu, -dhdv, 1.0);
-            break;
+    // Build local normal (points out of the ground)
+    ChVector3d n_local(0.0, 0.0, 0.0);
+    const double epsilon = 1e-8;  // Threshold for flat areas
+    if (std::fabs(dhdu) < epsilon && std::fabs(dhdv) < epsilon) {
+        // Perfectly flat: force normal along up-axis
+        switch (m_upAxis) {
+            case 0:
+                n_local.Set(1.0, 0.0, 0.0);
+                break;
+            case 1:
+                n_local.Set(0.0, 1.0, 0.0);
+                break;
+            default:
+                n_local.Set(0.0, 0.0, 1.0);
+                break;
+        }
+    } else {
+        // Non-flat: compute gradient-based normal
+        switch (m_upAxis) {
+            case 0:
+                n_local.Set(1.0, -dhdu, -dhdv);
+                break;
+            case 1:
+                n_local.Set(-dhdu, 1.0, -dhdv);
+                break;
+            default:
+                n_local.Set(-dhdu, -dhdv, 1.0);
+                break;
+        }
+        n_local.Normalize();
     }
-    n_local.Normalize();
 
-    // Return worldspace height & normal
-    const double centre = 0.5 * (m_minHeight + m_maxHeight);  // Chrono/Bullet convention
-    // convert local surface point to world
-    ChVector3d surf_local(0, 0, 0);
+    // Construct local surface point (using raw height h, no centering needed here)
+    ChVector3d surf_local(0.0, 0.0, 0.0);
     switch (m_upAxis) {
         case 0:
-            surf_local.Set(h - centre, u, v);
-            break;  // Xup
+            surf_local.Set(h, u, v);
+            break;
         case 1:
-            surf_local.Set(u, h - centre, v);
-            break;  // Yup
+            surf_local.Set(u, h, v);
+            break;
         default:
-            surf_local.Set(u, v, h - centre);
-            break;  // Zup
+            surf_local.Set(u, v, h);
+            break;
     }
+
+    // Transform to world space
     ChVector3d surf_world = frame.TransformPointLocalToParent(surf_local);
-
-    out_height = world_up ^ surf_world;  // dot product duplication of the chrono_vehicle chworldframe::height
+    out_height = surf_world.Dot(world_up);  // Project onto world up (handles arbitrary up-axis)
     out_normal = frame.TransformDirectionLocalToParent(n_local);
 
     return true;
 }
-
 void ChCollisionShapeHeightField::ArchiveOut(ChArchiveOut& archive_out) {
     archive_out.VersionWrite<ChCollisionShapeHeightField>();
     archive_out << CHNVP(m_nx);

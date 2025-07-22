@@ -85,6 +85,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
 
 
   private:
+    ChCoordsys<> m_patchFrame;  ///< patch frame in world space
     int                     m_nx, m_ny;
     double                  m_width, m_length;
     double m_heightCentre;  // (minH+maxH)/2

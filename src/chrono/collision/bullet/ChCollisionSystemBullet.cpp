@@ -20,14 +20,13 @@
 #include "chrono/physics/ChBody.h"
 #include "chrono/physics/ChParticleCloud.h"
 #include "chrono/fea/ChMesh.h"
-#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.h"
-#include "chrono/collision/bullet/BulletCollision/CollisionDispatch/cbtConvexHeightfieldAlgo.h"
 
 #include "chrono/collision/bullet/ChCollisionSystemBullet.h"
 #include "chrono/collision/bullet/ChCollisionModelBullet.h"
 #include "chrono/collision/bullet/ChCollisionAlgorithmsBullet.h"
 #include "chrono/collision/gimpact/GIMPACT/Bullet/cbtGImpactCollisionAlgorithm.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionDispatch/cbtCollisionDispatcherMt.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionDispatch/cbtspheretrianglecollisionalgorithm.h"
 #include "chrono/collision/bullet/LinearMath/cbtIDebugDraw.h"
 
 extern cbtScalar gContactBreakingThreshold;
@@ -109,9 +108,22 @@ ChCollisionSystemBullet::ChCollisionSystemBullet() : m_debug_drawer(nullptr) {
     // custom collision for GIMPACT mesh case too
     cbtGImpactCollisionAlgorithm::registerAlgorithm(bt_dispatcher);
 
-   //  Custom collision for terrain vs convex
-     auto m_collision_cvx_height = new cbtConvexHeightfieldAlgo::CreateFunc();
-     auto m_collision_height_cvx = new cbtConvexHeightfieldAlgo::SwappedCreateFunc();
+
+    //// test with just processalltriangles
+    //m_collision_cvx_height = new cbtConvexConcaveCollisionAlgorithm::CreateFunc();
+    //m_collision_height_cvx = new cbtConvexConcaveCollisionAlgorithm::SwappedCreateFunc();
+
+    // for (int proxy = BOX_SHAPE_PROXYTYPE; proxy < CONCAVE_SHAPES_START_HERE; ++proxy) {
+    //     if (proxy == TERRAIN_SHAPE_PROXYTYPE)
+    //         continue;
+    //     bt_dispatcher->registerCollisionCreateFunc(proxy, TERRAIN_SHAPE_PROXYTYPE, m_collision_cvx_height);
+    //     bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, proxy, m_collision_height_cvx);
+    // }
+
+     /// ***** CHRONO  *****
+     //  Custom collision for terrain vs convex
+     m_collision_cvx_height = new cbtConvexHeightfieldAlgorithm::CreateFunc();
+     m_collision_height_cvx = new cbtConvexHeightfieldAlgorithm::SwappedCreateFunc();
 
      for (int proxy = BOX_SHAPE_PROXYTYPE; proxy < CONCAVE_SHAPES_START_HERE; ++proxy) {
          if (proxy == TERRAIN_SHAPE_PROXYTYPE)
@@ -124,6 +136,27 @@ ChCollisionSystemBullet::ChCollisionSystemBullet() : m_debug_drawer(nullptr) {
      bt_dispatcher->registerCollisionCreateFunc(CE_TRIANGLE_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE,
                                                 m_collision_cvx_height);
      bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, CE_TRIANGLE_SHAPE_PROXYTYPE, m_collision_height_cvx);
+
+          /// ***** CHRONO  *****
+     //  Custom collision for terrain vs convex
+     m_collision_cvx_height = new cbtConvexHeightfieldAlgorithm::CreateFunc();
+     m_collision_height_cvx = new cbtConvexHeightfieldAlgorithm::SwappedCreateFunc();
+
+     for (int proxy = BOX_SHAPE_PROXYTYPE; proxy < CONCAVE_SHAPES_START_HERE; ++proxy) {
+         if (proxy == TERRAIN_SHAPE_PROXYTYPE)
+             continue;
+         bt_dispatcher->registerCollisionCreateFunc(proxy, TERRAIN_SHAPE_PROXYTYPE, m_collision_cvx_height);
+         bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, proxy, m_collision_height_cvx);
+     }
+
+     // Explicit registration for CE triangles
+     bt_dispatcher->registerCollisionCreateFunc(CE_TRIANGLE_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE,
+                                                m_collision_cvx_height);
+     bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, CE_TRIANGLE_SHAPE_PROXYTYPE,
+                                                m_collision_height_cvx);
+
+
+
 }
 
 ChCollisionSystemBullet::~ChCollisionSystemBullet() {
@@ -142,6 +175,8 @@ ChCollisionSystemBullet::~ChCollisionSystemBullet() {
     delete m_collision_seg_arc;
     delete m_collision_arc_arc;
     delete m_collision_cetri_cetri;
+    delete m_collision_cvx_height;
+    delete m_collision_height_cvx;
 
     delete m_ccCreate;
     delete m_ccCreateSwapped;

@@ -288,6 +288,65 @@ class cbtSegmentSegmentCollisionAlgorithm : public cbtActivatingCollisionAlgorit
     bool m_isSwapped;
 };
 
+
+
+// ================================================================================================
+
+/// Custom override of the default Bullet algorithm to handle collisions between a convex shape and a heightfield
+/// terrain.
+class cbtConvexHeightfieldAlgorithm : public cbtActivatingCollisionAlgorithm {
+  public:
+    struct CreateFunc : public cbtCollisionAlgorithmCreateFunc {
+        cbtCollisionAlgorithm* CreateCollisionAlgorithm(cbtCollisionAlgorithmConstructionInfo& ci,
+                                                        const cbtCollisionObjectWrapper* a,
+                                                        const cbtCollisionObjectWrapper* b) override;
+    };
+    struct SwappedCreateFunc : public CreateFunc {
+        cbtCollisionAlgorithm* CreateCollisionAlgorithm(cbtCollisionAlgorithmConstructionInfo& ci,
+                                                        const cbtCollisionObjectWrapper* a,
+                                                        const cbtCollisionObjectWrapper* b) override;
+    };
+
+    cbtConvexHeightfieldAlgorithm(cbtPersistentManifold* mf,
+                             const cbtCollisionAlgorithmConstructionInfo& ci,
+                             const cbtCollisionObjectWrapper* a,
+                             const cbtCollisionObjectWrapper* b,
+                             bool swapped);
+    cbtConvexHeightfieldAlgorithm(const cbtCollisionAlgorithmConstructionInfo& ci);
+
+    ~cbtConvexHeightfieldAlgorithm() override;
+
+void processCollision(const cbtCollisionObjectWrapper* Awrap,
+                            const cbtCollisionObjectWrapper* Bwrap,
+                            const cbtDispatcherInfo& info,
+                            cbtManifoldResult* result);
+
+    cbtScalar calculateTimeOfImpact(cbtCollisionObject*,
+                                    cbtCollisionObject*,
+                                    const cbtDispatcherInfo&,
+                                    cbtManifoldResult*) override {
+        return 1.f;
+    }
+
+    void getAllContactManifolds(cbtManifoldArray& arr) override {
+        if (m_manifoldPtr)
+            arr.push_back(m_manifoldPtr);
+    }
+
+  private:
+    void _add_contact(const cbtVector3& PwW,
+                      const cbtVector3& PwC,
+                      const cbtVector3& nW,
+                      cbtScalar penetration,
+                      cbtManifoldResult* result);
+
+    bool m_ownManifold{false};
+    cbtPersistentManifold* m_manifoldPtr{nullptr};
+    const cbtConvexShape* m_convex{nullptr};
+};
+
+
+
 /// @} collision_bullet
 
 }  // namespace chrono

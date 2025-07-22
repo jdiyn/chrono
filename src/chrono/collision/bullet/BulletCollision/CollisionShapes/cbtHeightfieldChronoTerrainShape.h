@@ -88,11 +88,15 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     void buildAccelerator(int chunkSize);
     void clearAccelerator();
 
-    // in cbtHeightfieldChronoTerrainShape.h (public)
+    // assumes the user handles whether the chunk exists or not
     const Range& GetVBoundsChunk(int cx, int cz) const {
         return m_vboundsGrid[cx + cz * m_vboundsGridWidth];
     }
 
+    // Get the vertex cache (for raycasting etc.)
+    const std::vector<cbtVector3>& getVertexCache() const {
+        return m_vertexCache;
+    }
 
 
     //------------------------------------------------------------------------
@@ -105,6 +109,13 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     /// Narrow-phase: triangles overlapping [aabbMin,aabbMax]
     virtual void processAllTriangles(cbtTriangleCallback * callback, const cbtVector3& aabbMin,
                                      const cbtVector3& aabbMax) const override;
+
+        // Performs bilinear height interpolation at grid cell coordinates (cell_u, cell_v), fractional within [0,1]
+    void getBilinearHeight(int iu, int iv, cbtScalar fu, cbtScalar fv, cbtScalar& height) const;
+
+    // Computes height and gradient (normal) at continuous local u,v coordinates
+    void queryHeightAndGradient(cbtScalar u, cbtScalar v, cbtScalar & height, cbtVector3 & grad) const;
+
 
     /// Hierarchical Bresenham raycast (Bullet 3.2+)
     void performRaycast(cbtTriangleCallback * callback, const cbtVector3& raySource, const cbtVector3& rayTarget) const;
@@ -126,14 +137,12 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     /// Scaled height at integer grid coordinates (x,z)
     cbtScalar getHeight(int x, int z) const;
 
-
     /// Sample height‑field at an arbitrary world point.
     /// Return false when (Pw) projects outside the X/Z (or Y/Z etc.) extent.
     bool sampleWorld(const cbtTransform& terrainFrame,  // world‑space frame of the shape
                      const cbtVector3& QueryPoint,              // query point in world
                      cbtVector3& SurfacePoint,                    // surface point (world)
                      cbtVector3& SurfaceNormal) const;         // surface normal (world)
-
 
   protected:
     // raw height data (must outlive this shape)
@@ -178,6 +187,15 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // TODO:: set a public function rebuildcache to build quad extents and verteces
     //// replicate Bullet’s getVertex (including centering by m_localOrigin)
     void getVertex(int x, int y, cbtVector3& vertex) const;
+
+
+    /// In cbtHeightfieldChronoTerrainShape (in place of sampleWorld):
+    /// Given a point in **local, unscaled, centered** grid coords (Pu,Pv,),
+    /// return centered+scaled height and normalized world‐gradient.
+    void getHeightAndNormalAtGrid(const cbtScalar gridU,              // e.g. vertexTerrain[upAxis==1]? x : y
+                                  const cbtScalar gridV,              // e.g. z  or y
+                                  cbtScalar& outHeight,               // out: local‐centered, scaled
+                                  cbtVector3& outNormalLocal) const;  // out: gradient in local coords
 
     // helper routines (defined in .cpp)
     void quantizeWithClamp(int out[3], const cbtVector3& pt) const;

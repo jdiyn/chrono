@@ -15,7 +15,6 @@
 // which draws upon the bullet version
 // =============================================================================
 
-
 #include "cbtHeightfieldChronoTerrainShape.h"
 #include "chrono/collision/bullet/LinearMath/cbtTransformUtil.h"
 #include <algorithm>
@@ -32,62 +31,66 @@ struct TmpTriangleBuffer : public cbtTriangleCallback {
     }
 };
 
-
-
-//  Heightfield fast bilinear sampler - using cells
-void cbtHeightfieldChronoTerrainShape::sampleHeight(cbtScalar xu,
-                                                    cbtScalar zv,
+void cbtHeightfieldChronoTerrainShape::sampleHeight(cbtScalar u,
+                                                    cbtScalar v,
                                                     cbtScalar& outH,
                                                     cbtVector3& outGrad) const {
-    // locate the cell in the heightfield grid
-    int ix = int(std::floor(xu));
-    int iz = int(std::floor(zv));
-    ix = std::clamp(ix, 0, m_heightStickWidth - 2);
-    iz = std::clamp(iz, 0, m_heightStickLength - 2);
+    // Convert query coordinates (u,v) into integer grid cell indices
+    int iu, iv;
+    cbtScalar fu, fv;
 
-    // fractional location inside that cell
-    cbtScalar fu = xu - ix;
-    cbtScalar fv = zv - iz;
-
-    // fetch the four corner heights (raw, un-scaled)
-    cbtScalar h00 = getRawHeightFieldValue(ix, iz);
-    cbtScalar h10 = getRawHeightFieldValue(ix + 1, iz);
-    cbtScalar h01 = getRawHeightFieldValue(ix, iz + 1);
-    cbtScalar h11 = getRawHeightFieldValue(ix + 1, iz + 1);
-
-    // bilinear interpolate height
-    cbtScalar h0 = h00 + fu * (h10 - h00);
-    cbtScalar h1 = h01 + fu * (h11 - h01);
-    cbtScalar h = h0 + fv * (h1 - h0);
-
-    // compute the partials (du = ∂H/∂u, dv = ∂H/∂v)
-    cbtScalar du = (h10 - h00) * (1 - fv) + (h11 - h01) * fv;
-    cbtScalar dv = (h01 - h00) * (1 - fu) + (h11 - h10) * fu;
-
-    // apply the heightScale
-    h *= m_heightScale;
-    du *= m_heightScale;
-    dv *= m_heightScale;
-
-    // pack into a gradient vector in the correct axes
-    cbtVector3 grad(0, 0, 0);
     switch (m_upAxis) {
-        case 0:  // X-up
-            grad.setValue(0, du, dv);
+        case 0:  // X-up: (u,v) = (y,z)
+            iu = std::clamp(int(std::floor(u)), 0, m_heightStickWidth - 2);
+            iv = std::clamp(int(std::floor(v)), 0, m_heightStickLength - 2);
+            fu = u - iu;
+            fv = v - iv;
             break;
-        case 1:  // Y-up
-            grad.setValue(du, 0, dv);
+        case 1:  // Y-up: (u,v) = (x,z)
+            iu = std::clamp(int(std::floor(u)), 0, m_heightStickWidth - 2);
+            iv = std::clamp(int(std::floor(v)), 0, m_heightStickLength - 2);
+            fu = u - iu;
+            fv = v - iv;
             break;
-        default:  // Z-up
-            grad.setValue(du, dv, 0);
+        default:  // Z-up: (u,v) = (x,y)
+            iu = std::clamp(int(std::floor(u)), 0, m_heightStickWidth - 2);
+            iv = std::clamp(int(std::floor(v)), 0, m_heightStickLength - 2);
+            fu = u - iu;
+            fv = v - iv;
             break;
     }
-    // send back the results
-    outH = h;
-    outGrad = grad;
+
+    // Heights at grid corners (already scaled)
+    auto H = [this](int x, int y) { return getRawHeightFieldValue(x, y) * m_heightScale; };
+
+    const cbtScalar h00 = H(iu, iv);
+    const cbtScalar h10 = H(iu + 1, iv);
+    const cbtScalar h01 = H(iu, iv + 1);
+    const cbtScalar h11 = H(iu + 1, iv + 1);
+
+    // Bilinear interpolation
+    const cbtScalar h0 = h00 + fu * (h10 - h00);
+    const cbtScalar h1 = h01 + fu * (h11 - h01);
+    outH = h0 + fv * (h1 - h0);
+
+    // Compute gradients in u,v
+    cbtScalar du = ((h10 - h00) * (1 - fv) + (h11 - h01) * fv);
+    cbtScalar dv = ((h01 - h00) * (1 - fu) + (h11 - h10) * fu);
+
+    // Convert gradients to proper world axes
+    switch (m_upAxis) {
+        case 0:
+            outGrad.setValue(1.0, -du, -dv);
+            break;  // X-up
+        case 1:
+            outGrad.setValue(-du, 1.0, -dv);
+            break;  // Y-up
+        default:
+            outGrad.setValue(-du, -dv, 1.0);
+            break;  // Z-up
+    }
+    outGrad.normalize();
 }
-
-
 
 // quantisation helper
 static inline int getQuantized(cbtScalar x) {
@@ -96,7 +99,7 @@ static inline int getQuantized(cbtScalar x) {
 
 void cbtHeightfieldChronoTerrainShape::quantizeWithClamp(int out[3], const cbtVector3& pt) const {
     cbtVector3 clamped = pt;
-    clamped.setMax(m_localAabbMin); // ensure correct min / maxing here. max the aabb min and minimise the aabb max.
+    clamped.setMax(m_localAabbMin);  // ensure correct min / maxing here. max the aabb min and minimise the aabb max.
     clamped.setMin(m_localAabbMax);
 
     out[0] = getQuantized(clamped.getX());
@@ -107,7 +110,6 @@ void cbtHeightfieldChronoTerrainShape::quantizeWithClamp(int out[3], const cbtVe
     cbtClamp(out[1], 0, m_heightStickLength - 1);
     out[2] = 0;
 }
-
 
 ////------------------------------------------------------------------------------
 //// replicate Bullet’s getVertex (including centering by m_localOrigin)
@@ -134,28 +136,25 @@ void cbtHeightfieldChronoTerrainShape::quantizeWithClamp(int out[3], const cbtVe
 //}
 
 // uses the cached vertices
- inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3& vtx) const {
+inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3& vtx) const {
     vtx = m_vertexCache[static_cast<std::size_t>(y) * m_heightStickWidth + x];
 }
 
+void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
+    // store locally – this fulfils the pure‑virtual contract
+    m_localScaling = s;
 
- void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
-     // store locally – this fulfils the pure‑virtual contract
-     m_localScaling = s;
-
-     // rebuild lookup tables that depend on scale
-     buildVertexCache();
-     buildQuadExtents();
-     if (m_vboundsChunkSize > 0)
-         buildAccelerator(m_vboundsChunkSize);
- }
-
+    // rebuild lookup tables that depend on scale
+    buildVertexCache();
+    buildQuadExtents();
+    if (m_vboundsChunkSize > 0)
+        buildAccelerator(m_vboundsChunkSize);
+}
 
 // raw height from user array (uncentered; heightScale & centering applied elsewhere)
 inline cbtScalar cbtHeightfieldChronoTerrainShape::getRawHeightFieldValue(int x, int y) const {
     return m_heightfieldData[y * m_heightStickWidth + x];
 }
-
 
 cbtScalar cbtHeightfieldChronoTerrainShape::getHeight(int x, int z) const {
     // clamp to valid grid
@@ -210,6 +209,20 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
       m_vboundsChunkSize(0),
       m_vboundsGridWidth(0),
       m_vboundsGridLength(0) {
+
+
+
+    std::cout << "\n IN CONSTRUCTOR ************** \n" << "[HFShape] Construct: W=" << heightStickWidth << " L=" << heightStickLength << " minH=" << minH
+              << " maxH=" << maxH << " scale=" << scale << " upAxis=" << up << " hfield ptr=" << (void*)data
+              << std::endl;
+
+    for (int i = 0; i < 8; ++i)  // sample first 8 height values
+        std::cout << "[HFShape] h[" << i << "]=" << data[i] << std::endl;
+
+
+
+
+
     // initialise member variables
     m_shapeType = TERRAIN_SHAPE_PROXYTYPE;
     cbtAssert(heightStickWidth > 1 && heightStickLength > 1 && minH <= maxH && up >= 0 && up < 3);
@@ -218,44 +231,64 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     // build unscaled local AABB & center
     switch (up) {
         case 0:
-            m_localAabbMin.setValue(minH, 0, 0);
-            m_localAabbMax.setValue(maxH, m_width, m_length);
+            m_localAabbMin.setValue(minH - (minH + maxH) / 2, -m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5));
+            m_localAabbMax.setValue(maxH - (minH + maxH) / 2, m_width * cbtScalar(0.5), m_length * cbtScalar(0.5));
             break;
         case 1:
-            m_localAabbMin.setValue(0, minH, 0);
-            m_localAabbMax.setValue(m_width, maxH, m_length);
+            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), minH - (minH + maxH) / 2, -m_length * cbtScalar(0.5));
+            m_localAabbMax.setValue(m_width * cbtScalar(0.5), maxH - (minH + maxH) / 2, m_length * cbtScalar(0.5));
             break;
         case 2:
-            m_localAabbMin.setValue(0, 0, minH);
-            m_localAabbMax.setValue(m_width, m_length, maxH);
+            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5), minH - (minH + maxH) / 2);
+            m_localAabbMax.setValue(m_width * cbtScalar(0.5), m_length * cbtScalar(0.5), maxH - (minH + maxH) / 2);
             break;
     }
-    m_localOrigin = (m_localAabbMin + m_localAabbMax) * cbtScalar(0.5);
+
+    // here the origin should only center the height, not the X,Y coordinates
+    m_localOrigin = cbtVector3(0, 0, 0);
+    m_localOrigin[m_upAxis] = (minH + maxH) * cbtScalar(0.5);
+
     // build caching first time
     buildQuadExtents();
     buildVertexCache();
-}
 
+    std::cout << "\n ******* In constructor after build quad and build vertex**** \n" << "[HFShape] m_localAabbMin: " << m_localAabbMin[m_upAxis]
+              << " m_localAabbMax: " << m_localAabbMax[m_upAxis] << " m_localOrigin: " << m_localOrigin[m_upAxis]
+              << " m_width=" << m_width << " m_length=" << m_length << std::endl;
+
+    for (int i = 0; i < 8 && i < m_vertexCache.size(); ++i)
+        std::cout << "[HFShape] raw_height[" << i
+                  << "]=" << getRawHeightFieldValue(i % m_heightStickWidth, i / m_heightStickWidth)
+                  << " centered_height="
+                  << (getRawHeightFieldValue(i % m_heightStickWidth, i / m_heightStickWidth) - m_localOrigin[m_upAxis])
+                  << " vertexCache[" << i << "][" << m_upAxis << "]=" << m_vertexCache[i][m_upAxis] << std::endl;
+}
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
     clearAccelerator();
 }
 
-// world‐space AABB
-void cbtHeightfieldChronoTerrainShape::getAabb(const cbtTransform& t, cbtVector3& aabbMin, cbtVector3& aabbMax) const {
-    // half‐extents in unscaled local
+void cbtHeightfieldChronoTerrainShape::getAabb(const cbtTransform& tr, cbtVector3& aabbMin, cbtVector3& aabbMax) const {
     cbtVector3 half = (m_localAabbMax - m_localAabbMin) * (getLocalScaling() * cbtScalar(0.5));
-    // local center offset
+
+    // The only thickness Bullet’s broad‑phase sees
+    // If minHeight == maxHeight, the component on m_upAxis is ZERO here
+    // ----------------------------------------------------------------
+    const cbtScalar MIN_THICKNESS =
+        0.5f;  // 0.5m - you may want to set this even larger if your largest object is bigger!
+    if (half[m_upAxis] < MIN_THICKNESS)
+        half[m_upAxis] = MIN_THICKNESS;
+    // ----------------------------------------------------------------
+
+    cbtMatrix3x3 abs_b = tr.getBasis().absolute();
+    cbtVector3 worldExtents(abs_b[0].dot(half), abs_b[1].dot(half), abs_b[2].dot(half));
+    worldExtents += cbtVector3(getMargin(), getMargin(), getMargin());
+
     cbtVector3 localCenter(0, 0, 0);
     localCenter[m_upAxis] = (m_minHeight + m_maxHeight) * cbtScalar(0.5);
     localCenter *= getLocalScaling();
-    // rotate half‐extents
-    cbtMatrix3x3 abs_b = t.getBasis().absolute();
-    cbtVector3 worldExtents(abs_b[0].dot(half), abs_b[1].dot(half), abs_b[2].dot(half));
-    // add margin
-    worldExtents += cbtVector3(getMargin(), getMargin(), getMargin());
-    // center
-    cbtVector3 worldCenter = t(localCenter);
+
+    cbtVector3 worldCenter = tr(localCenter);
     aabbMin = worldCenter - worldExtents;
     aabbMax = worldCenter + worldExtents;
 }
@@ -277,11 +310,11 @@ void cbtHeightfieldChronoTerrainShape::buildAccelerator(int chunkSize) {
             Range r;
             // init
             int sx = std::min(x0, m_heightStickWidth - 1), sz = std::min(z0, m_heightStickLength - 1);
-            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale;
+            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale - m_localOrigin[m_upAxis];
             r.min = r.max = h0;
             for (int zz = z0; zz < z0 + chunkSize + 1 && zz < m_heightStickLength; ++zz) {
                 for (int xx = x0; xx < x0 + chunkSize + 1 && xx < m_heightStickWidth; ++xx) {
-                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale;
+                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale - m_localOrigin[m_upAxis];
                     r.min = cbtMin(r.min, h);
                     r.max = cbtMax(r.max, h);
                 }
@@ -298,7 +331,6 @@ void cbtHeightfieldChronoTerrainShape::clearAccelerator() {
     m_vboundsChunkSize = 0;
 }
 
-
 void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
     const int w = m_heightStickWidth - 1;
     const int l = m_heightStickLength - 1;
@@ -306,10 +338,10 @@ void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
 
     for (int z = 0, idx = 0; z < l; ++z) {
         for (int x = 0; x < w; ++x, ++idx) {
-            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale;
-            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale;
-            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale;
-            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale;
+            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
 
             QuadExtents e;
             e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
@@ -319,45 +351,223 @@ void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// cbtHeightfieldChronoTerrainShape.cpp
+// ---------------------------------------------------------------------------
+
 void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
     const int W = m_heightStickWidth;
     const int L = m_heightStickLength;
     m_vertexCache.resize(static_cast<std::size_t>(W) * L);
 
+    const cbtVector3 S = m_localScaling;  // cache once
+
+    const cbtScalar dx = m_width / cbtScalar(W - 1);
+    const cbtScalar dy = m_length / cbtScalar(L - 1);
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+
     for (int y = 0; y < L; ++y)
         for (int x = 0; x < W; ++x) {
-            cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
-            cbtVector3 v;
+            cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale; // do we even need to scale again here??
 
-            // original getVertex math, but executed only once to build cache
+            // grid → local before scaling
+            cbtScalar lx = x * dx - halfW;
+            cbtScalar ly = y * dy - halfL;
+
+            cbtVector3 v;
             switch (m_upAxis) {
                 case 0:
-                    v.setValue(h - m_localOrigin.getX(), (-m_width * cbtScalar(0.5)) + x,
-                               (-m_length * cbtScalar(0.5)) + y);
+                    v.setValue(h, lx, ly);
                     break;
                 case 1:
-                    v.setValue((-m_width * cbtScalar(0.5)) + x, h - m_localOrigin.getY(),
-                               (-m_length * cbtScalar(0.5)) + y);
+                    v.setValue(lx, h, ly);
                     break;
-                case 2:
-                    v.setValue((-m_width * cbtScalar(0.5)) + x, (-m_length * cbtScalar(0.5)) + y,
-                               h - m_localOrigin.getZ());
-                    break;
+                default:
+                    v.setValue(lx, ly, h);
+                    break;  // Z‑up
             }
-            v *= getLocalScaling();
-            m_vertexCache[static_cast<std::size_t>(y) * W + x] = v;
+
+        // **apply scaling exactly once**
+        v *= S; // <<---- we're scaling again here, is that correct?
+            m_vertexCache[static_cast<std::size_t>(y) * W + x] = v;  
+    }
+}
+
+
+/// return centered+scaled height and normalized world‐gradient.
+void cbtHeightfieldChronoTerrainShape::getHeightAndNormalAtGrid(
+    const cbtScalar gridU,             // e.g. vertexTerrain[upAxis==1]? x : y
+                              const cbtScalar gridV,             // e.g. z  or y
+                              cbtScalar& outHeight,              // out: local‐centered, scaled
+                              cbtVector3& outNormalLocal) const  // out: gradient in local coords
+{
+    // Reuse your existing queryHeightAndGradient, which expects (u,v)
+    // in centered‐meters units and returns centered height + raw gradient.
+    queryHeightAndGradient(gridU, gridV, outHeight, outNormalLocal);
+    // Then scale the gradient into world by shape‐scaling:
+    outNormalLocal = outNormalLocal * getLocalScaling();
+    outNormalLocal.normalize();
+}
+
+
+void cbtHeightfieldChronoTerrainShape::processAllTriangles(cbtTriangleCallback* cb,
+                                                           const cbtVector3& aabbMinWorld,
+                                                           const cbtVector3& aabbMaxWorld) const {
+
+    // Convert the world‑space AABB into the *un‑scaled* local grid frame
+    const cbtVector3 invS = getInverseLocalScaling();
+    const cbtVector3 aabbMin = aabbMinWorld * invS;
+    const cbtVector3 aabbMax = aabbMaxWorld * invS;
+
+    // Now proceed exactly as before ─ but all distances are in grid metres
+    const cbtScalar dx = m_width / cbtScalar(m_heightStickWidth - 1);
+    const cbtScalar dz = m_length / cbtScalar(m_heightStickLength - 1);
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+
+    int gx0, gx1, gz0, gz1;
+    switch (m_upAxis) {
+        case 0:
+            gx0 = int(floor((aabbMin.y() + halfW) / dx));
+            gx1 = int(ceil((aabbMax.y() + halfW) / dx));
+            gz0 = int(floor((aabbMin.z() + halfL) / dz));
+            gz1 = int(ceil((aabbMax.z() + halfL) / dz));
+            break;
+        case 1:
+            gx0 = int(floor((aabbMin.x() + halfW) / dx));
+            gx1 = int(ceil((aabbMax.x() + halfW) / dx));
+            gz0 = int(floor((aabbMin.z() + halfL) / dz));
+            gz1 = int(ceil((aabbMax.z() + halfL) / dz));
+            break;
+        default:
+            gx0 = int(floor((aabbMin.x() + halfW) / dx));
+            gx1 = int(ceil((aabbMax.x() + halfW) / dx));
+            gz0 = int(floor((aabbMin.y() + halfL) / dz));
+            gz1 = int(ceil((aabbMax.y() + halfL) / dz));
+            break;
+    }
+    gx0 = cbtMax(0, cbtMin(gx0, m_heightStickWidth - 2));
+    gx1 = cbtMax(0, cbtMin(gx1, m_heightStickWidth - 1));
+    gz0 = cbtMax(0, cbtMin(gz0, m_heightStickLength - 2));
+    gz1 = cbtMax(0, cbtMin(gz1, m_heightStickLength - 1));
+    if (gx1 <= gx0 || gz1 <= gz0)
+        return;
+
+    // ----- step 2 : emit triangles (NO vertical filter) ----------------
+    const int wQuads = m_heightStickWidth - 1;
+    int triIndex = 0;
+
+    auto emit = [&](cbtVector3 a, cbtVector3 b, cbtVector3 c) {
+        // ensure up‑facing winding without re‑scaling
+        cbtVector3 n = (b - a).cross(c - a);
+        if (n[m_upAxis] < 0)
+            std::swap(b, c);
+        cbtVector3 tri[3] = {a, b, c};  // cached verts already include localScaling
+        cb->processTriangle(tri, 0, triIndex++);
+        
+    };
+
+
+    for (int z = gz0; z < gz1; ++z)
+        for (int x = gx0; x < gx1; ++x) {
+            cbtVector3 v00, v10, v01, v11;
+            getVertex(x, z, v00);
+            getVertex(x + 1, z, v10);
+            getVertex(x, z + 1, v01);
+            getVertex(x + 1, z + 1, v11);
+
+            bool alt = m_flipQuadEdges || (m_useDiamondSubdivision && (((x + z) & 1) != 0)) ||
+                       (m_useZigzagSubdivision && ((z & 1) != 0));
+
+            if (alt) {
+                emit(v00, v10, v11);
+                emit(v00, v11, v01);
+            } else {
+                emit(v00, v10, v01);
+                emit(v10, v11, v01);
+            }
         }
 }
 
-// Not needed with new convexheightfield collision algo
-// TODO: fix inheritance to remove this method
-void cbtHeightfieldChronoTerrainShape::processAllTriangles(cbtTriangleCallback* callback,
-                                                           const cbtVector3& aabbMin,  // local-space AABB min?
-                                                           const cbtVector3& aabbMax) const {
 
-    // do nothing for now
+
+
+// Simple bilinear height interpolation given integer cell indices and fractional offsets
+void cbtHeightfieldChronoTerrainShape::getBilinearHeight(int cellX,
+                                                         int cellZ,
+                                                         cbtScalar fracX,
+                                                         cbtScalar fracZ,
+                                                         cbtScalar& outHeight) const {
+    // Fetch the four corner heights (scaled by heightScale)
+    auto heightAt = [&](int x, int z) { return getRawHeightFieldValue(x, z) * m_heightScale; };
+    cbtScalar h00 = heightAt(cellX, cellZ);
+    cbtScalar h10 = heightAt(cellX + 1, cellZ);
+    cbtScalar h01 = heightAt(cellX, cellZ + 1);
+    cbtScalar h11 = heightAt(cellX + 1, cellZ + 1);
+
+    // Bilinear interpolation
+    cbtScalar h0 = h00 + fracX * (h10 - h00);
+    cbtScalar h1 = h01 + fracX * (h11 - h01);
+    outHeight = h0 + fracZ * (h1 - h0);
 }
 
+
+// Full height and gradient query at any (u,v) in the heightfield grid
+void cbtHeightfieldChronoTerrainShape::queryHeightAndGradient(cbtScalar coordU,
+                                                              cbtScalar coordV,
+                                                              cbtScalar& outHeight,
+                                                              cbtVector3& outNormalLocal) const {
+    // Grid spacing and half‑extents
+    cbtScalar dx = m_width / (m_heightStickWidth - 1);
+    cbtScalar dz = m_length / (m_heightStickLength - 1);
+    cbtScalar halfW = m_width * cbtScalar(0.5);
+    cbtScalar halfL = m_length * cbtScalar(0.5);
+
+    // Map (coordU,coordV) in centered meters to [0..width-1]/[0..length-1]
+    cbtScalar gridX = (coordU + halfW) / dx;
+    cbtScalar gridZ = (coordV + halfL) / dz;
+
+    // Clamp to valid cell range
+    cbtClamp(gridX, cbtScalar(0), cbtScalar(m_heightStickWidth - 1) - cbtScalar(1e-6));
+    cbtClamp(gridZ, cbtScalar(0), cbtScalar(m_heightStickLength - 1) - cbtScalar(1e-6));
+
+    int cellX = int(std::floor(gridX));
+    int cellZ = int(std::floor(gridZ));
+    cbtScalar fracX = gridX - cellX;
+    cbtScalar fracZ = gridZ - cellZ;
+
+    // Get the interpolated height (still centered, un‑scaled)
+    cbtScalar heightCentered;
+    getBilinearHeight(cellX, cellZ, fracX, fracZ, heightCentered);
+
+    // Center around the stored origin (same as getVertex)
+    outHeight = heightCentered - m_localOrigin[m_upAxis];
+
+    // Compute local partial derivatives ∂H/∂u, ∂H/∂v in meters/meter
+    // We can reuse the raw data directly:
+    auto rawH = [&](int x, int z) { return getRawHeightFieldValue(x, z) * m_heightScale; };
+    cbtScalar dhdx = ((rawH(cellX + 1, cellZ) - rawH(cellX, cellZ)) * (1 - fracZ) +
+                      (rawH(cellX + 1, cellZ + 1) - rawH(cellX, cellZ + 1)) * fracZ) /
+                     dx;
+    cbtScalar dhdz = ((rawH(cellX, cellZ + 1) - rawH(cellX, cellZ)) * (1 - fracX) +
+                      (rawH(cellX + 1, cellZ + 1) - rawH(cellX + 1, cellZ)) * fracX) /
+                     dz;
+
+    // Build the local‐space normal (upAxis defines which component is “height”)
+    switch (m_upAxis) {
+        case 0:  // X‐up: height ∈ X, so normal = [ 1, -∂H/∂u, -∂H/∂v ]
+            outNormalLocal.setValue(cbtScalar(1), -dhdx, -dhdz);
+            break;
+        case 1:  // Y‐up
+            outNormalLocal.setValue(-dhdx, cbtScalar(1), -dhdz);
+            break;
+        default:  // Z‐up
+            outNormalLocal.setValue(-dhdx, -dhdz, cbtScalar(1));
+            break;
+    }
+    outNormalLocal.normalize();
+}
 
 //  Grid‐raycast machinery in an unnamed namespace
 // Essentially copies the Bullet latest approach here... thus far its not used
@@ -423,14 +633,12 @@ void gridRaycast(Action_T& action, const cbtVector3& from, const cbtVector3& to,
 }
 }  // unnamed namespace
 
-
 // performRaycast: supports ANY upAxis, with winding-corrected triangles
 // and hierarchical Bresenham + chunked culling
 // This is a slightly modified version of the Bullet code
 void cbtHeightfieldChronoTerrainShape::performRaycast(cbtTriangleCallback* callback,
                                                       const cbtVector3& raySource,
                                                       const cbtVector3& rayTarget) const {
-
     // Explicit AABB check and early exit
     cbtVector3 shapeAabbMin, shapeAabbMax;
     getAabb(cbtTransform::getIdentity(), shapeAabbMin, shapeAabbMax);
@@ -442,7 +650,6 @@ void cbtHeightfieldChronoTerrainShape::performRaycast(cbtTriangleCallback* callb
         rayMax.getY() < shapeAabbMin.getY() || rayMin.getY() > shapeAabbMax.getY() ||
         rayMax.getZ() < shapeAabbMin.getZ() || rayMin.getZ() > shapeAabbMax.getZ())
         return;
-
 
     // Transform into cell-local space
     cbtVector3 beginPos = raySource / getLocalScaling() + m_localOrigin;
@@ -556,104 +763,49 @@ void cbtHeightfieldChronoTerrainShape::performRaycast(cbtTriangleCallback* callb
     }
 }
 
-// This is duplicated in the Chrono Shape.
+// Get a world space point on the terrain at the given QueryPoint, if it is on the terrain
 bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFrame,
-                                                   const cbtVector3& QueryPoint,
-                                                   cbtVector3& SurfacePoint,
-                                                   cbtVector3& SurfaceNormal) const {
-    // world to local coords
-    const cbtVector3 Pl = terrainFrame.invXform(QueryPoint);  // to shape local
-    const cbtVector3 invScale = getInverseLocalScaling();
-    const cbtVector3 Pcell = Pl * invScale;  // HF‑local coords
+                                                   const cbtVector3& queryPointWorld,
+                                                   cbtVector3& outSurfacePointWorld,
+                                                   cbtVector3& outSurfaceNormalWorld) const {
+    // 1) World → shape local (includes centering+scaling)
+    cbtVector3 localPoint = terrainFrame.invXform(queryPointWorld);
 
-    // planar (u,v) according to up‑axis
-    cbtScalar pu, pv;
+    // 2) Remove the shape’s localScaling
+    localPoint = localPoint * getInverseLocalScaling();
+
+    // 3) Determine planar coordinates (u,v) in centered local units
+    cbtScalar u, v;
     switch (m_upAxis) {
         case 0:
-            pu = Pcell.getY();
-            pv = Pcell.getZ();
-            break;  // X‑up
+            u = localPoint.y();
+            v = localPoint.z();
+            break;  // X‐up
         case 1:
-            pu = Pcell.getX();
-            pv = Pcell.getZ();
-            break;  // Y‑up
+            u = localPoint.x();
+            v = localPoint.z();
+            break;  // Y‐up
         default:
-            pu = Pcell.getX();
-            pv = Pcell.getY();
-            break;  // Z‑up
+            u = localPoint.x();
+            v = localPoint.y();
+            break;  // Z‐up
     }
 
-    // reject outside rectangle (half extents)
-    if (cbtFabs(pu) > m_width * 0.5 || cbtFabs(pv) > m_length * 0.5)
-        return false;
+    // 4) Query height & local normal (both centered, un‑scaled)
+    cbtScalar heightCentered;
+    cbtVector3 normalCentered;
+    queryHeightAndGradient(u, v, heightCentered, normalCentered);
 
-    // locate the grid cell and bilinear weights
-    const cbtScalar cellU = (pu + m_width * 0.5) * (m_heightStickWidth - 1) / m_width;
-    const cbtScalar cellV = (pv + m_length * 0.5) * (m_heightStickLength - 1) / m_length;
+    // 5) Build the local‐space surface point (centered, un‑scaled)
+    localPoint[m_upAxis] = heightCentered;
 
-    int ix = int(cellU);
-    int iz = int(cellV);
-    const cbtScalar fu = cellU - ix;
-    const cbtScalar fv = cellV - iz;
+    // 6) Re‑apply centering + localScaling to get “full” local coords
+    localPoint[m_upAxis] += m_localOrigin[m_upAxis];
+    localPoint = localPoint * getLocalScaling();
 
-    // clamp on right / top border
-    if (ix >= m_heightStickWidth - 1) {
-        ix = m_heightStickWidth - 2;
-    }
-    if (iz >= m_heightStickLength - 1) {
-        iz = m_heightStickLength - 2;
-    }
+    // 7) Transform back to world
+    outSurfacePointWorld = terrainFrame * localPoint;
+    outSurfaceNormalWorld = (terrainFrame.getBasis() * normalCentered).normalized();
 
-    // corner heights (already × heightScale)
-    auto H = [&](int x, int z) { return getRawHeightFieldValue(x, z) * m_heightScale; };
-    const cbtScalar h00 = H(ix, iz);
-    const cbtScalar h10 = H(ix + 1, iz);
-    const cbtScalar h01 = H(ix, iz + 1);
-    const cbtScalar h11 = H(ix + 1, iz + 1);
-
-    const cbtScalar h0 = h00 + fu * (h10 - h00);
-    const cbtScalar h1 = h01 + fu * (h11 - h01);
-    const cbtScalar h = h0 + fv * (h1 - h0);
-
-    // surface normal (central diff, same as Chrono)
-    const cbtScalar du = (h10 - h00 + h11 - h01) * 0.5 * (m_heightStickWidth - 1) / m_width;
-    const cbtScalar dv = (h01 - h00 + h11 - h10) * 0.5 * (m_heightStickLength - 1) / m_length;
-
-    cbtVector3 nL;
-    switch (m_upAxis) {
-        case 0:
-            nL.setValue(1, -du, -dv);
-            break;  // X‑up
-        case 1:
-            nL.setValue(-du, 1, -dv);
-            break;  // Y‑up
-        default:
-            nL.setValue(-du, -dv, 1);
-            break;  // Z‑up
-    }
-
-    // scale-correct the gradient BEFORE normalising (same as convex path)
-    const cbtVector3& S = getLocalScaling();  // (sx,sy,sz)
-    nL.setValue(nL.x() * S.x(), nL.y() * S.y(), nL.z() * S.z());
-
-    nL.normalize();
-    SurfaceNormal = terrainFrame.getBasis() * nL;  // to world
-
-    // world‑space surface point
-    cbtVector3 PsL(0, 0, 0);
-    switch (m_upAxis) {
-        case 0:
-            PsL.setValue(h - m_localOrigin.getX(), Pcell.getY(), Pcell.getZ());
-            break;
-        case 1:
-            PsL.setValue(Pcell.getX(), h - m_localOrigin.getY(), Pcell.getZ());
-            break;
-        default:
-            PsL.setValue(Pcell.getX(), Pcell.getY(), h - m_localOrigin.getZ());
-            break;
-    }
-    PsL *= getLocalScaling();  // apply localScaling
-    SurfacePoint = terrainFrame * PsL;              // to world
-
-    return true;  // if requested, true if the point is on the terrain
+    return true;
 }

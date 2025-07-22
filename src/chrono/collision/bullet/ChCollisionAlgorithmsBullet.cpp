@@ -26,6 +26,8 @@
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbt2DShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtCEtriangleShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtSegmentShape.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldChronoTerrainShape.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionDispatch/SphereTriangleDetector.h"
 
 namespace chrono {
 
@@ -1661,5 +1663,117 @@ cbtCollisionAlgorithm* cbtSegmentSegmentCollisionAlgorithm::CreateFunc::CreateCo
         return new (mem) cbtSegmentSegmentCollisionAlgorithm(0, ci, body0Wrap, body1Wrap, true);
     }
 }
+
+
+
+
+// ---------------------------------------------------------------------------
+// Heightfield collision algorithm
+cbtCollisionAlgorithm* cbtConvexHeightfieldAlgorithm::CreateFunc::CreateCollisionAlgorithm(
+    cbtCollisionAlgorithmConstructionInfo& ci,
+    const cbtCollisionObjectWrapper* a,
+    const cbtCollisionObjectWrapper* b) {
+    void* mem = ci.m_dispatcher1->allocateCollisionAlgorithm(sizeof(cbtConvexHeightfieldAlgorithm));
+    return new (mem) cbtConvexHeightfieldAlgorithm(ci.m_manifold, ci, a, b, false);
+}
+cbtCollisionAlgorithm* cbtConvexHeightfieldAlgorithm::SwappedCreateFunc::CreateCollisionAlgorithm(
+    cbtCollisionAlgorithmConstructionInfo& ci,
+    const cbtCollisionObjectWrapper* a,
+    const cbtCollisionObjectWrapper* b) {
+    void* mem = ci.m_dispatcher1->allocateCollisionAlgorithm(sizeof(cbtConvexHeightfieldAlgorithm));
+    return new (mem) cbtConvexHeightfieldAlgorithm(ci.m_manifold, ci, a, b, true);
+}
+
+cbtConvexHeightfieldAlgorithm::cbtConvexHeightfieldAlgorithm(cbtPersistentManifold* mf,
+                                                   const cbtCollisionAlgorithmConstructionInfo& ci,
+                                                   const cbtCollisionObjectWrapper* a,
+                                                   const cbtCollisionObjectWrapper* b,
+                                                   bool swapped)
+    : cbtActivatingCollisionAlgorithm(ci, a, b) {
+    m_convex = static_cast<const cbtConvexShape*>(swapped ? b->getCollisionShape() : a->getCollisionShape());
+    m_ownManifold = (mf == nullptr);
+    m_manifoldPtr =
+        m_ownManifold ? ci.m_dispatcher1->getNewManifold(a->getCollisionObject(), b->getCollisionObject()) : mf;
+}
+
+cbtConvexHeightfieldAlgorithm::cbtConvexHeightfieldAlgorithm(const cbtCollisionAlgorithmConstructionInfo& ci)
+    : cbtActivatingCollisionAlgorithm(ci) {}
+
+cbtConvexHeightfieldAlgorithm::~cbtConvexHeightfieldAlgorithm() {
+    if (m_ownManifold && m_manifoldPtr)
+        m_dispatcher->releaseManifold(m_manifoldPtr);
+}
+
+void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWrapper* wrapperA,
+                                                     const cbtCollisionObjectWrapper* wrapperB,
+                                                     const cbtDispatcherInfo& /*info*/,
+                                                     cbtManifoldResult* resultOut) {
+    if (!m_manifoldPtr)
+        return;
+    resultOut->setPersistentManifold(m_manifoldPtr);
+
+    // Identify which is convex vs. terrain
+    bool convexIsA = (wrapperA->getCollisionShape() == m_convex);
+    auto* convexWrap = convexIsA ? wrapperA : wrapperB;
+    auto* terrainWrap = convexIsA ? wrapperB : wrapperA;
+
+    const cbtTransform& xfWorldConvex = convexWrap->getWorldTransform();
+    const cbtTransform& xfWorldTerrain = terrainWrap->getWorldTransform();
+
+    // Prepare the terrain shape
+    auto* terrainShape = static_cast<const cbtHeightfieldChronoTerrainShape*>(terrainWrap->getCollisionShape());
+    if (!terrainShape)
+        return;
+
+    // Common parameters
+    cbtScalar contactMargin = m_convex->getMargin();
+    cbtScalar breakThreshold = m_manifoldPtr->getContactBreakingThreshold();
+   // const int upAxis = terrainShape->getUpAxis();
+    cbtVector3 sphereCenterW = xfWorldConvex.getOrigin();
+
+
+    // Polyhedral convex
+    if (auto* polyShape = dynamic_cast<const cbtPolyhedralConvexShape*>(m_convex)) {
+        int numVerts = polyShape->getNumVertices();
+        for (int i = 0; i < numVerts; ++i) {
+            cbtVector3 localVertex;
+            polyShape->getVertex(i, localVertex);
+            cbtVector3 worldVertex = xfWorldConvex * localVertex;
+
+            cbtVector3 surfacePoint, surfaceNormal;
+            bool hit = terrainShape->sampleWorld(xfWorldTerrain, worldVertex, surfacePoint, surfaceNormal);
+            if (!hit)
+                continue;
+
+            cbtScalar signedDist = (worldVertex - surfacePoint).dot(surfaceNormal);
+            cbtScalar penetration = signedDist - contactMargin;
+            if (penetration >= breakThreshold)
+                continue;
+
+            // Use worldVertex as the contact on the convex
+            resultOut->addContactPoint(surfaceNormal,  // normal
+                                       worldVertex,    // point on convex
+                                       penetration);
+        }
+    }
+
+    // TODO: insert sphere handling!
+
+
+    resultOut->refreshContactPoints();
+}
+
+
+void cbtConvexHeightfieldAlgorithm::_add_contact(const cbtVector3& PwW,
+                                            const cbtVector3& PwC,
+                                            const cbtVector3& nW,
+                                            cbtScalar penetration,
+                                            cbtManifoldResult* result) {
+    cbtManifoldPoint cp(PwW, PwC, nW, penetration);
+    cp.m_lifeTime = 0;
+    result->addContactPoint(nW, PwW, penetration);
+}
+
+
 
 }  // namespace chrono

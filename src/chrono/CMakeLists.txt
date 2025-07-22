@@ -774,6 +774,7 @@ set(Chrono_collision_bullet_SOURCES
     collision/bullet/BulletCollision/CollisionDispatch/cbtCompoundCompoundCollisionAlgorithm.cpp
     collision/bullet/BulletCollision/CollisionDispatch/cbtManifoldResult.cpp
     collision/bullet/BulletCollision/CollisionDispatch/cbtConvexConcaveCollisionAlgorithm.cpp
+    collision/bullet/BulletCollision/CollisionDispatch/cbtConvexHeightfieldAlgo.cpp
     collision/bullet/BulletCollision/CollisionDispatch/cbtEmptyCollisionAlgorithm.cpp
     collision/bullet/BulletCollision/CollisionDispatch/cbtSphereTriangleCollisionAlgorithm.cpp
     collision/bullet/BulletCollision/CollisionDispatch/cbtConvexConvexAlgorithm.cpp
@@ -818,6 +819,7 @@ set(Chrono_collision_bullet_SOURCES
     collision/bullet/BulletCollision/CollisionShapes/cbtMinkowskiSumShape.cpp
     collision/bullet/BulletCollision/CollisionShapes/cbtTriangleBuffer.cpp
     collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldTerrainShape.cpp
+    collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldChronoTerrainShape.cpp
     collision/bullet/BulletCollision/CollisionShapes/cbtCapsuleShape.cpp
     collision/bullet/BulletCollision/CollisionShapes/cbtConvexInternalShape.cpp
     collision/bullet/BulletCollision/CollisionShapes/cbtUniformScalingShape.cpp

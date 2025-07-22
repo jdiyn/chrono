@@ -384,20 +384,21 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
                                                  hf->GetUpAxis(), hf->GetFlipQuadEdges());
 #endif
 
-    // may not need this now that heightfield is a custom approach using bilinear interp.
+    // heightfield is a custom approach using bilinear interp. but set this in place for accuracy
+    // if someone wants to use the standard algo processalltriangles path
     bt_hf->setUseDiamondSubdivision(true);
 
-    // put it into world scale units: spacing between samples on X and Y
+    // put it into world scale units! Important: do not double scale down the line!
     bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
-                                      hf->GetFieldLength() / (hf->GetLengthSamples() - 1), 1.0f));
+                                      hf->GetFieldLength() / (hf->GetLengthSamples() - 1), hf->GetHeightScale()));
 
     // apply margin in one go
     cbtScalar full_margin = GetSuggestedFullMargin();
     // set narrowphase margin to 0
-    bt_hf->setMargin(r); // Ensure this is set so that objects DONT sink through the heightfield
+    bt_hf->setMargin(full_margin); // Ensure this is set so that objects DONT sink through the heightfield
 
-    bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up
 
+    bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up. 16 should cover most cases
     
     this->bt_collision_object->setCollisionShape(bt_hf);
 
@@ -406,8 +407,6 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
 
     // hand off to the normal inject routine
     injectShape(hf, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
-
-
 }
 
 

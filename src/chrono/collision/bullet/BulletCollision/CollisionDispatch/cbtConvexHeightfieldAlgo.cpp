@@ -60,29 +60,16 @@ static inline void gridCoords(const cbtVector3& p, int up, cbtScalar& u, cbtScal
 static void collectSupportPoints(const cbtConvexShape* s, cbtAlignedObjectArray<cbtVector3>& out) {
 
     if (s->getShapeType() == BOX_SHAPE_PROXYTYPE) {
-        const auto* box = static_cast<const cbtBoxShape*>(s);
-        const cbtVector3 e = box->getHalfExtentsWithMargin();  // WITH margin
+        // Use support function sampling for boxes to ensure correct geometry
+        static const cbtVector3 directions[8] = {cbtVector3(1, 1, 1),   cbtVector3(-1, 1, 1),  cbtVector3(1, -1, 1),
+                                                 cbtVector3(-1, -1, 1), cbtVector3(1, 1, -1),  cbtVector3(-1, 1, -1),
+                                                 cbtVector3(1, -1, -1), cbtVector3(-1, -1, -1)};
         out.resize(8);
-        int i = 0;
-        for (int x = -1; x <= 1; x += 2)
-            for (int y = -1; y <= 1; y += 2)
-                for (int z = -1; z <= 1; z += 2)
-                    out[i++].setValue(x * e.x(), y * e.y(), z * e.z());
-        return;  // nothing else to do for a box
-    }
-
-    // other shapes
-    if (s->isPolyhedral()) {
-        const auto* poly = static_cast<const cbtPolyhedralConvexShape*>(s);
-        int nv = poly->getNumVertices();
-        constexpr int kMaxDenseVerts = 128;
-        int n = std::min(nv, kMaxDenseVerts);
-        out.resize(n);
-        for (int i = 0; i < n; ++i)
-            poly->getVertex(i, out[i]);
+        for (int i = 0; i < 8; ++i) {
+            out[i] = s->localGetSupportingVertexWithoutMargin(directions[i]);
+        }
         return;
     }
-
     // Sphere handling of ring-based contact points
     // TODO: alter this to skip non-likely points and save compute time
     if (s->getShapeType() == SPHERE_SHAPE_PROXYTYPE) {
@@ -119,16 +106,28 @@ static void collectSupportPoints(const cbtConvexShape* s, cbtAlignedObjectArray<
         }
         return;
     }
-
-    // fallback – 26 direction GJK support map sample for other shapes
-    static const cbtVector3 dir[26] = {{1, 0, 0},   {-1, 0, 0},  {0, 1, 0},  {0, -1, 0},  {0, 0, 1},  {0, 0, -1},
-                                       {1, 1, 0},   {-1, 1, 0},  {1, -1, 0}, {-1, -1, 0}, {1, 0, 1},  {-1, 0, 1},
-                                       {1, 0, -1},  {-1, 0, -1}, {0, 1, 1},  {0, -1, 1},  {0, 1, -1}, {0, -1, -1},
-                                       {1, 1, 1},   {-1, 1, 1},  {1, -1, 1}, {-1, -1, 1}, {1, 1, -1}, {-1, 1, -1},
-                                       {1, -1, -1}, {-1, -1, -1}};
-    out.resize(26);
-    for (int i = 0; i < 26; ++i)
-        out[i] = s->localGetSupportingVertexWithoutMargin(dir[i]);
+    // other shapes
+    if (s->isPolyhedral()) {
+        const auto* poly = static_cast<const cbtPolyhedralConvexShape*>(s);
+        int nv = poly->getNumVertices();
+        constexpr int kMaxDenseVerts = 128;
+        int n = std::min(nv, kMaxDenseVerts);
+        out.resize(n);
+        for (int i = 0; i < n; ++i)
+            poly->getVertex(i, out[i]);
+        return;
+    } 
+    {
+        // fallback – 26 direction GJK support map sample for other shapes
+        static const cbtVector3 dir[26] = {{1, 0, 0},   {-1, 0, 0},  {0, 1, 0},  {0, -1, 0},  {0, 0, 1},  {0, 0, -1},
+                                           {1, 1, 0},   {-1, 1, 0},  {1, -1, 0}, {-1, -1, 0}, {1, 0, 1},  {-1, 0, 1},
+                                           {1, 0, -1},  {-1, 0, -1}, {0, 1, 1},  {0, -1, 1},  {0, 1, -1}, {0, -1, -1},
+                                           {1, 1, 1},   {-1, 1, 1},  {1, -1, 1}, {-1, -1, 1}, {1, 1, -1}, {-1, 1, -1},
+                                           {1, -1, -1}, {-1, -1, -1}};
+        out.resize(26);
+        for (int i = 0; i < 26; ++i)
+            out[i] = s->localGetSupportingVertexWithoutMargin(dir[i]);
+    }
 }
 
 
@@ -138,7 +137,7 @@ void cbtConvexHeightfieldAlgo::processCollision(const cbtCollisionObjectWrapper*
                                                 const cbtCollisionObjectWrapper* bodyB,
                                                 const cbtDispatcherInfo&,
                                                 cbtManifoldResult* result) {
-    // Identify which body is the Chrono height-field
+    // Identify which body is the Chrono heightfield
     const bool terrainIsA = bodyA->getCollisionShape()->getShapeType() == TERRAIN_SHAPE_PROXYTYPE;
     const auto* terrain = terrainIsA ? static_cast<const chrono_hf*>(bodyA->getCollisionShape())
                                      : static_cast<const chrono_hf*>(bodyB->getCollisionShape());
@@ -153,7 +152,6 @@ void cbtConvexHeightfieldAlgo::processCollision(const cbtCollisionObjectWrapper*
     const int upAxis = terrain->getUpAxis();
     cbtVector3 upVec(0, 0, 0);
     upVec[upAxis] = 1;
-
 
     const cbtVector3 invScale = terrain->getInverseLocalScaling();
     const cbtVector3 localOrg = terrain->getLocalOrigin();
@@ -268,99 +266,201 @@ void cbtConvexHeightfieldAlgo::processCollision(const cbtCollisionObjectWrapper*
     }
 
 
-    //-------------------------------------------------------------
-    // Generic convex against height-field (sampleWorld + correct transforms)
-    //-------------------------------------------------------------
+    // Generic convex ⨯ height‑field
+    // (execute after the sphere‑specific early‑return)
+    // ═══════════════════════════════════════════════════════════════════════
     static thread_local cbtAlignedObjectArray<cbtVector3> verts;
     verts.clear();
     collectSupportPoints(static_cast<const cbtConvexShape*>(shape), verts);
 
-    // margins and vertical band
+
     const cbtScalar cMargin = static_cast<const cbtConvexShape*>(shape)->getMargin();
-    const cbtScalar gap = cMargin + tMargin;
-
-    // compute vMin/vMax and 2D grid bounds from support points
-    cbtScalar vMin = 1e30f, vMax = -1e30f;
-    cbtScalar gxMin = 1e30f, gxMax = -1e30f;
-    cbtScalar gzMin = 1e30f, gzMax = -1e30f;
-    for (int i = 0; i < verts.size(); ++i) {
-        const cbtVector3& vLocal = verts[i];
-        // transform the box‐local point into world‐space
-        cbtVector3 Pw = trS * vLocal;
-        // then into heightfield local cell coords
-        cbtVector3 Pl = (trT.invXform(Pw) * invScale) + localOrg;
-
-        vMin = cbtMin(vMin, Pl[upAxis]);
-        vMax = cbtMax(vMax, Pl[upAxis]);
-
-        cbtScalar gx, gz;
-        gridCoords(Pl, upAxis, gx, gz);
-        gxMin = cbtMin(gxMin, gx);
-        gxMax = cbtMax(gxMax, gx);
-        gzMin = cbtMin(gzMin, gz);
-        gzMax = cbtMax(gzMax, gz);
-    }
-    vMin -= gap;
-    vMax += gap;
-
-    // convert to chunk indices
-    constexpr int kChunkShift = 4;
-    int cx0 = cbtMax(0, int(gxMin) >> kChunkShift);
-    int cx1 = cbtMin((terrain->getWidth() - 2) >> kChunkShift, int(gxMax) >> kChunkShift);
-    int cz0 = cbtMax(0, int(gzMin) >> kChunkShift);
-    int cz1 = cbtMin((terrain->getLength() - 2) >> kChunkShift, int(gzMax) >> kChunkShift);
-
-    // Bullet’s tolerance
     const cbtScalar tol = m_manifold->getContactBreakingThreshold() + result->m_closestPointDistanceThreshold;
 
-    // per-vertex narrow-phase
+    // per‑vertex loop (the cheap early test)
     for (int i = 0; i < verts.size(); ++i) {
-        const cbtVector3& vLocal = verts[i];
-        // box‐space → world‐space
-        cbtVector3 Pw = trS * vLocal;
-        // world → heightfield‐local
-        cbtVector3 Pl = (trT.invXform(Pw) * invScale) + localOrg;
+        //------------------------------------------------------------------
+        // 1.  Vertex in world space
+        //------------------------------------------------------------------
+        const cbtVector3 Pw = trS * verts[i];
 
-        // 2D grid cull
-        cbtScalar gx, gz;
-        gridCoords(Pl, upAxis, gx, gz);
-        if (gx < gxMin || gx > gxMax || gz < gzMin || gz > gzMax)
+  // 2.  First sample only to obtain the local normal
+        cbtVector3 dummyP, surfN;
+        if (!terrain->sampleWorld(trT, Pw, dummyP, surfN)) 
+            continue;  // vertex outside HF → try next one
+
+        //------------------------------------------------------------------
+        // 3.  Extra guarantee: deepest point along –surfN
+        //------------------------------------------------------------------
+        const cbtVector3 dirL = trS.getBasis().transpose() * (-surfN);  // to shape‑local
+        const cbtVector3 supportL =
+            static_cast<const cbtConvexShape*>(shape)->localGetSupportingVertexWithoutMargin(dirL);
+        const cbtVector3 PwLowest = trS * supportL;  // world
+
+        //------------------------------------------------------------------
+        // 4.  Signed separation, penetration
+        //------------------------------------------------------------------
+
+        // 3 b.  Re‑sample terrain *under the candidate point*
+        cbtVector3 surfP;
+        if (!terrain->sampleWorld(trT, PwLowest, surfP, surfN))
+            continue;  // very rare: candidate lands outside HF
+        const cbtScalar sep = (PwLowest - surfP).dot(surfN);               // + above, – inside
+
+        const cbtScalar pen = sep - cMargin;                  // Bullet wants negative
+
+        if (pen > tol)  // too far, skip
             continue;
 
-        // chunk‐box cull
-        int cx = int(gx) >> kChunkShift;
-        int cz = int(gz) >> kChunkShift;
-        if (cx < cx0 || cx > cx1 || cz < cz0 || cz > cz1)
-            continue;
-
-        // height‐range cull
-        const chrono_hf::Range& R = terrain->GetVBoundsChunk(cx, cz);
-        if (R.max < vMin - tol || R.min > vMax + tol)
-            continue;
-
-        // robust world sampling
-        cbtVector3 surfP, surfN;
-        if (!terrain->sampleWorld(trT, Pw, surfP, surfN))
-            continue;
-
-        // slide Pw onto the surface along surfN
-        cbtScalar slide = (surfP - Pw).dot(surfN);
-        cbtVector3 PwSurf = Pw + surfN * slide;
-
-        // compute penetration depth
-        cbtScalar pen = -slide - cMargin;
-        if (pen > tol)
-            continue;
-
-        // add the contact
+        //------------------------------------------------------------------
+        // 5.  Emit the contact (Bullet B→A convention)
+        //------------------------------------------------------------------
         cbtVector3 nW = terrainIsA ? -surfN : surfN;
-        result->addContactPoint(nW, PwSurf, pen);
+        cbtVector3 pW = terrainIsA ? PwLowest : surfP;  // position on B
 
+        result->addContactPoint(nW, pW, pen);
     }
+
+
+
+// ──────────────────────────────────────────────────────────────────────────
+    //  DEBUG PROBE – executes only when the generic loop added *zero* contacts.
+    //  If this probe also fails, the terrain shape is not giving heights.
+    // ──────────────────────────────────────────────────────────────────────────
+    if (m_manifold->getNumContacts() == 0 && shape->isConvex()) {
+        // Bottom point of the convex along the height‑field up direction
+        cbtVector3 localDown = -upVec;                             // world down
+        cbtVector3 dirL = trS.getBasis().transpose() * localDown;  // to shape‑local
+        cbtVector3 supportL = static_cast<const cbtConvexShape*>(shape)->localGetSupportingVertexWithoutMargin(dirL);
+        cbtVector3 PwBottom = trS * supportL;  // world
+
+        // Terrain directly under that point
+        cbtVector3 surfP, surfN;
+        if (terrain->sampleWorld(trT, PwBottom, surfP, surfN)) {
+            const cbtScalar cMargin = static_cast<const cbtConvexShape*>(shape)->getMargin();
+            cbtScalar pen = (PwBottom - surfP).dot(surfN) - cMargin;  // negative = penetration
+            const cbtScalar tol = m_manifold->getContactBreakingThreshold() + result->m_closestPointDistanceThreshold;
+
+            if (pen <= tol) {
+                if (pen > 0)
+                    pen = 0;  // clamp to ≤0
+                cbtVector3 nW = terrainIsA ? -surfN : surfN;
+                cbtVector3 pW = terrainIsA ? PwBottom : surfP;
+                result->addContactPoint(nW, pW, pen);
+                // → if you see ONE contact after simulation, algo missed; terrain OK.
+            }
+        }
+    }
+
+
+
+
+
+    ////-------------------------------------------------------------
+    //// Generic convex against height-field
+    ////-------------------------------------------------------------
+
+    //constexpr int kMaxDenseVerts = 128;
+    ////static thread_local cbtAlignedObjectArray<cbtVector3> verts;
+    //verts.resize(0);
+
+    //if (shape->isPolyhedral() &&
+    //    static_cast<const cbtPolyhedralConvexShape*>(shape)->getNumVertices() <= kMaxDenseVerts) {
+    //    const auto* poly = static_cast<const cbtPolyhedralConvexShape*>(shape);
+    //    verts.resize(poly->getNumVertices());
+    //    for (int i = 0; i < poly->getNumVertices(); ++i)
+    //        poly->getVertex(i, verts[i]);
+    //} else {
+    //    collectSupportPoints(static_cast<const cbtConvexShape*>(shape), verts);
+    //}
+
+    ////const cbtScalar cMargin = static_cast<const cbtConvexShape*>(shape)->getMargin();
+    //const cbtScalar gap = cMargin + tMargin;
+
+    //cbtScalar vMin = 1e30f, vMax = -1e30f, gxMin = 1e30f, gxMax = -1e30f, gzMin = 1e30f, gzMax = -1e30f;
+
+    //for (int idx = 0; idx < verts.size(); ++idx) {
+    //    const cbtVector3& v = verts[idx];
+    //    const cbtVector3 Pw = trS * v;
+    //    const cbtVector3 Pl = (trT.invXform(Pw) * invScale) + localOrg;
+    //    vMin = cbtMin(vMin, Pl[upAxis]);
+    //    vMax = cbtMax(vMax, Pl[upAxis]);
+    //    cbtScalar gx, gz;
+    //    gridCoords(Pl, upAxis, gx, gz);
+    //    gxMin = cbtMin(gxMin, gx);
+    //    gxMax = cbtMax(gxMax, gx);
+    //    gzMin = cbtMin(gzMin, gz);
+    //    gzMax = cbtMax(gzMax, gz);
+    //}
+    //vMin -= gap;
+    //vMax += gap;
+
+    //constexpr int kChunkShift = 4;
+    //const int cx0 = cbtMax(0, int(gxMin) >> kChunkShift);
+    //const int cx1 = cbtMin(int(terrain->getWidth() - 2) >> kChunkShift, int(gxMax) >> kChunkShift);
+    //const int cz0 = cbtMax(0, int(gzMin) >> kChunkShift);
+    //const int cz1 = cbtMin(int(terrain->getLength() - 2) >> kChunkShift, int(gzMax) >> kChunkShift);
+
+    //for (int idx = 0; idx < verts.size(); ++idx) {
+    //    const cbtVector3& vLocal = verts[idx];
+    //    const cbtVector3 Pw = trS * vLocal;
+    //    const cbtVector3 Pl = (trT.invXform(Pw) * invScale) + localOrg;
+
+    //    cbtScalar gx, gz;
+    //    gridCoords(Pl, upAxis, gx, gz);
+    //    if (gx < gxMin || gx > gxMax || gz < gzMin || gz > gzMax)
+    //        continue;
+    //    const int cx = int(gx) >> kChunkShift, cz = int(gz) >> kChunkShift;
+    //    if (cx < cx0 || cx > cx1 || cz < cz0 || cz > cz1)
+    //        continue;
+    //    const chrono_hf::Range& R = terrain->GetVBoundsChunk(cx, cz);
+    //    //if (R.max < vMin || R.min > vMax)
+    //    //    continue;
+    //    if (gx < 0 || gz < 0 || gx >= terrain->getWidth() - 1 || gz >= terrain->getLength() - 1)
+    //        continue;
+
+    //    cbtScalar height;
+    //    cbtVector3 grad;
+    //    terrain->sampleHeight(gx, gz, height, grad);
+
+    //    const cbtScalar distSurf = (Pl[upAxis] - localOrg[upAxis]) - (height - localOrg[upAxis]);
+    //    if (distSurf > cMargin)
+    //        continue;
+
+    //    const cbtScalar pen = distSurf - cMargin;
+    //    // calc the normals
+    //    cbtVector3 nL;
+    //    switch (upAxis) {
+    //        case 0: {  // X-up  for  grad.y = du , grad.z = dv
+    //            const cbtScalar du = grad.y() * invScale.getY();
+    //            const cbtScalar dv = grad.z() * invScale.getZ();
+    //            nL.setValue(1, -du, -dv);
+    //            break;
+    //        }
+    //        case 1: {  // Y-up  for  grad.x = du , grad.z = dv
+    //            const cbtScalar du = grad.x() * invScale.getX();
+    //            const cbtScalar dv = grad.z() * invScale.getZ();
+    //            nL.setValue(-du, 1, -dv);
+    //            break;
+    //        }
+    //        default: {  // Z‑up  for  grad.x = du , grad.y = dv
+    //            const cbtScalar du = grad.x() * invScale.getX();
+    //            const cbtScalar dv = grad.y() * invScale.getY();
+    //            nL.setValue(-du, -dv, 1);
+    //            break;
+    //        }
+    //    }
+    //    nL.normalize();
+    //    cbtVector3 nW = trT.getBasis() * nL;
+    //    if (terrainIsA)
+    //        nW = -nW;  // Bullet’s B→A convention
+
+    //    const cbtVector3 pOnB = terrainIsA ? Pw : Pw - nW * distSurf;
+    //    result->addContactPoint(nW, pOnB, pen);
+    //}
 
     // finalize manifold
     result->refreshContactPoints();
-    return;
 }
        
 
@@ -410,7 +510,7 @@ cbtScalar cbtConvexHeightfieldAlgo::calculateTimeOfImpact(cbtCollisionObject* bo
     /* simple binary subdivision along linear path of centre point */
     cbtScalar lo = 0.f, hi = 1.f;
     for (int it = 0; it < 25; ++it) {
-        const cbtScalar mid = 0.5f * (lo + hi);
+        const cbtScalar mid = 0.5 * (lo + hi);
         const cbtVector3 Pw = trFrom.getOrigin() + motion * mid;
         const cbtVector3 Pl = (trTerrain.invXform(Pw) * invScale) + localOrig;
 

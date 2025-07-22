@@ -315,6 +315,17 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     unsigned int n_verts = nv_x * nv_y;
     unsigned int n_faces = 2 * (nv_x - 1) * (nv_y - 1);
 
+
+        // Print out terrain patch info before creation
+    std::cout << "[AddPatch] nx=" << nv_x << " ny=" << nv_y << " x_scale=" << x_scale << " y_scale=" << y_scale
+              << " hMin=" << hMin
+              << " hMax=" << hMax << std::endl;
+    for (int idx = 0; idx < 8; ++idx)  // print first 8 heights for sample
+        std::cout << "[AddPatch] heisghtscale[" << idx << "] = " << h_scale << std::endl;
+
+
+
+
     // Resize mesh arrays
     patch->m_trimesh = chrono_types::make_shared<ChTriangleMeshConnected>();
     patch->m_trimesh->GetCoordsVertices().resize(n_verts);
@@ -419,6 +430,9 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     }
 
     auto mesh_name = filesystem::path(heightmap_file).stem();
+
+
+
 
     // Cache patch parameters
     patch->m_radius = ChVector3d(length, width, (hMax - hMin)).Length() / 2;
@@ -885,6 +899,14 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
                                                          /* remainder is Z=2 */               : 2;
 
 
+    // Print out terrain patch info before creation
+    std::cout << "[AddPatch] nx=" << nx << " ny=" << ny << " dimX=" << dimX << " dimY=" << dimY << " hMin=" << hmin
+              << " hMax=" << hmax << std::endl;
+    for (int idx = 0; idx < 8; ++idx)  // print first 8 heights for sample
+        std::cout << "[AddPatch] heights[" << idx << "] = " << hf_heights[idx] << std::endl;
+    std::cout << "[AddPatch] World Up axis: " << upAxis << std::endl;
+
+
     // build a single btHeightfieldTerrainShape
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
                                                       dimX, dimY,                    // field extent along X/Y
@@ -904,6 +926,99 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     patch->m_width = dimX;
     patch->m_length = dimY;
     patch->m_heights = std::move(hf_heights);   // easy grab the height data across to the member data
+
+    // if visualise is true, we build in intialisation of the patch
+
+
+    // Visualization mesh builder if visualize is true
+    if (visualize) {
+        // Construct a triangular mesh for visualization
+        double dx = dimX / (nx - 1);
+        double dy = dimY / (ny - 1);
+        unsigned int n_verts = nx * ny;
+        unsigned int n_faces = 2 * (nx - 1) * (ny - 1);
+
+        // Initialize the visualization mesh
+        patch->m_vis_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
+        auto& vertices = patch->m_vis_mesh->GetCoordsVertices();
+        auto& normals = patch->m_vis_mesh->GetCoordsNormals();
+        auto& uvs = patch->m_vis_mesh->GetCoordsUV();
+        auto& colors = patch->m_vis_mesh->GetCoordsColors();
+        auto& idx_vertices = patch->m_vis_mesh->GetIndicesVertexes();
+        auto& idx_normals = patch->m_vis_mesh->GetIndicesNormals();
+        auto& idx_uvs = patch->m_vis_mesh->GetIndicesUV();
+
+        vertices.resize(n_verts);
+        normals.resize(n_verts);
+        uvs.resize(n_verts);
+        colors.resize(n_verts, ChColor(1, 1, 1));  // Default white
+        idx_vertices.resize(n_faces);
+        idx_normals.resize(n_faces);
+        idx_uvs.resize(n_faces);
+
+        // Initialize the array of accumulators (number of adjacent faces to a vertex)
+        std::vector<int> accumulators(n_verts, 0);
+
+        // Load mesh vertices (j=0 bottom, increasing up)
+        unsigned int iv = 0;
+        double halfX = dimX / 2.0;
+        double halfY = dimY / 2.0;
+        double x_scale = 1.0 / (nx - 1);
+        double y_scale = 1.0 / (ny - 1);
+        for (int iy = 0; iy < ny; ++iy) {  // j=0 bottom
+            double y = iy * dy - halfY;
+            for (int ix = 0; ix < nx; ++ix) {
+                double x = ix * dx - halfX;
+                double z = heights[iy * nx + ix];  // heights row-major, j=0 bottom
+                vertices[iv] = ChVector3d(x, y, z);
+                normals[iv] = ChVector3d(0, 0, 0);  // Initialize to zero
+                uvs[iv] = ChVector2d(ix * x_scale, iy * y_scale);
+                ++iv;
+            }
+        }
+
+        // Specify triangular faces (two at a time).
+        // Specify the face vertices counter-clockwise.
+        // Set the normal indices same as the vertex indices.
+        unsigned int it = 0;
+        for (int iy = 0; iy < ny - 1; ++iy) {
+            for (int ix = 0; ix < nx - 1; ++ix) {
+                int v0 = iy * nx + ix;
+                idx_vertices[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
+                idx_normals[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
+                idx_uvs[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
+                ++it;
+                idx_vertices[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
+                idx_normals[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
+                idx_uvs[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
+                ++it;
+            }
+        }
+
+        // Calculate normals and then average the normals from all adjacent faces
+        for (it = 0; it < n_faces; ++it) {
+            // Calculate the triangle normal as a normalized cross product.
+            ChVector3d nrm = Vcross(vertices[idx_vertices[it][1]] - vertices[idx_vertices[it][0]],
+                                    vertices[idx_vertices[it][2]] - vertices[idx_vertices[it][0]]);
+            nrm.Normalize();
+            // Increment the normals of all incident vertices by the face normal
+            normals[idx_normals[it][0]] += nrm;
+            normals[idx_normals[it][1]] += nrm;
+            normals[idx_normals[it][2]] += nrm;
+            // Increment the count of all incident vertices by 1
+            accumulators[idx_normals[it][0]] += 1;
+            accumulators[idx_normals[it][1]] += 1;
+            accumulators[idx_normals[it][2]] += 1;
+        }
+
+        // Set the normals to the average values
+        for (unsigned int in = 0; in < n_verts; ++in) {
+            normals[in] = ChWorldFrame::FromISO(normals[in] / (double)accumulators[in]);
+        }
+
+    }
+    
+    // return the heightfield
     return patch;
 }
 
@@ -914,12 +1029,14 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
                                                             const ChCoordsys<>& pos,
                                                             const std::string& heightmap_file,
-                                                            double sizeX,
-                                                            double sizeY,
+                                                            double scaled_sizeX,
+                                                            double scaled_sizeY,
                                                             double hMin,
-                                                            double hMax,
-                                                            double sweep_radius,
-                                                            bool visualize) {
+                                                            double hMax, 
+                                                            double sweep_radius) {
+    // visualisation is always set to true for image based heigthfield
+    auto visualize = true; // TODO - put this in signature for option
+
     // Load grayscale image
     STB img;
     if (!img.ReadFromFile(heightmap_file, 1))
@@ -927,22 +1044,38 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 
     const int nx = img.GetWidth();
     const int ny = img.GetHeight();
-    const double scale = (hMax - hMin) / img.GetRange();
+    double scale = (hMax - hMin) / img.GetRange();
 
+    std::cout << "[DEBUG - IMAGE BASED HEIGHTFIELD] Loaded heightmap: " << heightmap_file << std::endl;
+    std::cout << "[DEBUG] Dimensions: nx=" << nx << " ny=" << ny << std::endl;
+    std::cout << "[DEBUG] Height range: hMin=" << hMin << " hMax=" << hMax << std::endl;
+    std::cout << "[DEBUG] Image gray range: " << img.GetRange() << " scale=" << scale << std::endl;
+
+   // pos.pos.z() = 0;
     // Compute centre as bullet heightfield expects heights to be centered around 0.0
     double centre = 0.5 * (hMin + hMax);
+
+    std::cout << "[DEBUG] Centre height: " << centre << std::endl;
 
     // Build bottom ro first height vector (centered)
     std::vector<double> heights;
     heights.reserve(nx * ny);
     for (int j = ny - 1; j >= 0; --j) {
         for (int i = 0; i < nx; ++i) {
-            heights.emplace_back(hMin + img.Gray(i, j) * scale - centre);
+            /* CORRECT */
+            double h = hMin + (img.Gray(i, j)) * scale;
+            heights.emplace_back(h);  // store raw heights - no centering
+          //  heights.emplace_back(hMin + img.Gray(i, j) * scale - centre); // precentre the heights - input them directly
         }
     }
-    // Adjust min/max that were given to account for centreing
-    hMin -= centre;
-    hMax -= centre;
+
+    std::cout << "[DEBUG] Sample heights (first 8):" << std::endl;
+    for (int idx = 0; idx < 8 && idx < heights.size(); ++idx) {
+        std::cout << "[DEBUG] heights[" << idx << "] = " << heights[idx] << std::endl;
+    }
+
+    auto mm = std::minmax_element(heights.begin(), heights.end());
+    std::cout << "[HF DEBUG] true height span: " << *mm.first << " … " << *mm.second << std::endl;
 
     //// Quick grid-coverage check: every i,j slot must hold a finite value
     //for (int j = 0; j < ny; ++j)
@@ -954,7 +1087,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 
 
     // Call the existing heightfield AddPatch function with the heights and args
-    auto patch = AddPatch(material, pos, heights, nx, ny, sizeX, sizeY, sweep_radius, visualize);
+    auto patch = AddPatch(material, pos, heights, nx, ny, scaled_sizeX, scaled_sizeY, sweep_radius, visualize);
 
     // set the name - todo
     //auto mesh_name = filesystem::path(heightmap_file).stem();
@@ -1100,115 +1233,143 @@ void RigidTerrain::HeightFieldPatch::Initialize() {
     // would need to be split into 512x512 or 1024x1024 tiles for rendering.
     // Since the heightfield is likely used with Unity/Unreal, this isn't expected to be an issue
     // instead, this is purely provided for limited non-unity/unreal vis purposes.
+    //if (m_visualize) {
+    //    // Limit mesh resolution for visualisation (no upsampling)
+    //    int max_visual_res = 512;
+    //    int nx = std::min(m_nx, max_visual_res);
+    //    int ny = std::min(m_ny, max_visual_res);
+
+    //    // Subsample height data if needed (row-major)
+    //    std::vector<double> sampled_heights(nx * ny);
+    //    for (int j = 0; j < ny; ++j) {
+    //        int src_j = (m_ny == ny) ? j : int(double(j) * (m_ny - 1) / double(ny - 1));
+    //        for (int i = 0; i < nx; ++i) {
+    //            int src_i = (m_nx == nx) ? i : int(double(i) * (m_nx - 1) / double(nx - 1));
+    //            sampled_heights[j * nx + i] = m_heights[src_j * m_nx + src_i];
+    //        }
+    //    }
+
+    //    // Set up mesh arrays
+    //    auto mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
+    //    std::vector<ChVector3d>& vertices = mesh->GetCoordsVertices();
+    //    std::vector<ChVector3d>& normals = mesh->GetCoordsNormals();
+    //    std::vector<ChVector2d>& uvs = mesh->GetCoordsUV();
+    //    std::vector<ChColor>& colors = mesh->GetCoordsColors();
+    //    std::vector<ChVector3i>& faces = mesh->GetIndicesVertexes();
+
+    //    vertices.resize(nx * ny);
+    //    normals.assign(nx * ny, ChVector3d(0));
+    //    uvs.resize(nx * ny);
+    //    colors.assign(nx * ny, ChColor(1, 1, 1));
+    //    faces.resize(2 * (nx - 1) * (ny - 1));
+
+    //    double dx = m_width / (nx - 1);
+    //    double dy = m_length / (ny - 1);
+    //    double halfW = 0.5 * m_width;
+    //    double halfL = 0.5 * m_length;
+
+    //    // Fill vertices and UVs
+    //    for (int y = 0; y < ny; ++y) {
+    //        for (int x = 0; x < nx; ++x) {
+    //            int idx = y * nx + x;
+    //            double vx = x * dx - halfW;
+    //            double vy = y * dy - halfL;
+    //            double vz = sampled_heights[idx];
+    //            vertices[idx] = ChVector3d(vx, vy, vz);
+    //            uvs[idx] = ChVector2d(double(x) / (nx - 1), double(y) / (ny - 1));
+    //        }
+    //    }
+
+    //    // Build triangles and accumulate normals per vertex
+    //    int face_idx = 0;
+    //    std::vector<int> count_normals(nx * ny, 0);
+    //    for (int y = 0; y < ny - 1; ++y) {
+    //        for (int x = 0; x < nx - 1; ++x) {
+    //            int v0 = y * nx + x;
+    //            int v1 = v0 + 1;
+    //            int v2 = v0 + nx;
+    //            int v3 = v2 + 1;
+
+    //            // Alternate diagonal to match Bullet's quad flip
+    //            if ((x + y) % 2 == 0) {
+    //                // Triangle 1: v0, v1, v2
+    //                faces[face_idx] = ChVector3i(v0, v1, v2);
+    //                ChVector3d normal1 = Vcross(vertices[v1] - vertices[v0], vertices[v2] - vertices[v0]);
+    //                normal1.Normalize();
+    //                normals[v0] += normal1;
+    //                count_normals[v0]++;
+    //                normals[v1] += normal1;
+    //                count_normals[v1]++;
+    //                normals[v2] += normal1;
+    //                count_normals[v2]++;
+
+    //                face_idx++;
+    //                // Triangle 2: v1, v3, v2
+    //                faces[face_idx] = ChVector3i(v1, v3, v2);
+    //                ChVector3d normal2 = Vcross(vertices[v3] - vertices[v1], vertices[v2] - vertices[v1]);
+    //                normal2.Normalize();
+    //                normals[v1] += normal2;
+    //                count_normals[v1]++;
+    //                normals[v2] += normal2;
+    //                count_normals[v2]++;
+    //                normals[v3] += normal2;
+    //                count_normals[v3]++;
+    //                face_idx++;
+    //            } else {
+    //                // Triangle 1: v0, v3, v2
+    //                faces[face_idx] = ChVector3i(v0, v3, v2);
+    //                ChVector3d normal1 = Vcross(vertices[v3] - vertices[v0], vertices[v2] - vertices[v0]);
+    //                normal1.Normalize();
+    //                normals[v0] += normal1;
+    //                count_normals[v0]++;
+    //                normals[v2] += normal1;
+    //                count_normals[v2]++;
+    //                normals[v3] += normal1;
+    //                count_normals[v3]++;
+
+    //                face_idx++;
+    //                // Triangle 2: v0, v1, v3
+    //                faces[face_idx] = ChVector3i(v0, v1, v3);
+    //                ChVector3d normal2 = Vcross(vertices[v1] - vertices[v0], vertices[v3] - vertices[v0]);
+    //                normal2.Normalize();
+    //                normals[v0] += normal2;
+    //                count_normals[v0]++;
+    //                normals[v1] += normal2;
+    //                count_normals[v1]++;
+    //                normals[v3] += normal2;
+    //                count_normals[v3]++;
+    //                face_idx++;
+    //            }
+    //        }
+    //    }
+
+    //    // Average normals for smooth shading
+    //    for (size_t i = 0; i < normals.size(); ++i) {
+    //        if (count_normals[i] > 0) {
+    //            normals[i] /= double(count_normals[i]);
+    //            normals[i].Normalize();
+    //        }
+    //    }
+
+    //    // Attach to visual model
+    //    auto visual_model = chrono_types::make_shared<ChVisualModel>();
+    //    auto mesh_visual = chrono_types::make_shared<ChVisualShapeTriangleMesh>();
+    //    mesh_visual->AddMaterial(m_vis_mat);
+    //    mesh_visual->SetName("HeightfieldVisual");
+    //    mesh_visual->SetMesh(mesh, false);
+    //    mesh_visual->SetMutable(false);
+    //    visual_model->AddShape(mesh_visual);
+    //    m_body->AddVisualModel(visual_model);
+    //}
+
     if (m_visualize) {
-        // --- LIMIT VISUAL MESH RESOLUTION ---
-        // TODO: test on VSG if it needs this limit
-        int max_visual_res = 512;
-        int nx = std::min(m_nx, max_visual_res);
-        int ny = std::min(m_ny, max_visual_res);
-
-        // Subsample heights to (nx x ny)
-        std::vector<double> H_vis(nx * ny);
-        for (int j = 0; j < ny; ++j) {
-            int src_j = (m_ny == ny) ? j : int(double(j) * (m_ny - 1) / double(ny - 1));
-            for (int i = 0; i < nx; ++i) {
-                int src_i = (m_nx == nx) ? i : int(double(i) * (m_nx - 1) / double(nx - 1));
-                H_vis[j * nx + i] = m_heights[src_j * m_nx + src_i];
-            }
-        }
-        auto& H = H_vis;  // row-major, j=0 at bottom!! important to send data in with correct ordering
-
-        double W = m_width;
-        double L = m_length;
-
-        // set Z offset so visual matches Bullet's centered AABB
-        double hmin = H[0], hmax = H[0];
-        for (double h : H) {
-            hmin = std::min(hmin, h);
-            hmax = std::max(hmax, h);
-        }
-        double originZ = 0.5 * (hmin + hmax);
-
-        // grid spacing and half extents
-        double dx = W / double(nx - 1);
-        double dy = L / double(ny - 1);
-        double halfW = 0.5 * W;
-        double halfL = 0.5 * L;
-
-        // setup
-        auto vis_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
-        auto& V = vis_mesh->GetCoordsVertices();
-        auto& N = vis_mesh->GetCoordsNormals();
-        auto& UV = vis_mesh->GetCoordsUV();
-        auto& C = vis_mesh->GetCoordsColors();
-        auto& idx = vis_mesh->GetIndicesVertexes();
-
-        V.resize(nx * ny);
-        N.assign(nx * ny, ChVector3d(0));
-        UV.resize(nx * ny);
-        C.assign(nx * ny, ChColor(1, 1, 1));
-        idx.resize(2 * (nx - 1) * (ny - 1));
-
-        // fill vertices and UVs
-        for (int j = 0; j < ny; ++j) {
-            for (int i = 0; i < nx; ++i) {
-                int vi = j * nx + i;
-                double x = double(i) * dx - halfW;   // from -W/2 to +W/2
-                double y = double(j) * dy - halfL;   // from -L/2 to +L/2
-                double z = H[j * nx + i] - originZ;  // centred height
-                V[vi] = ChVector3d(x, y, z);
-                UV[vi] = ChVector2d(double(i) / (nx - 1), double(j) / (ny - 1));
-            }
-        }
-
-        // build triangles, alternate diagonal each cell to match bullet's quad-flipping
-        int f = 0;
-        for (int j = 0; j < ny - 1; ++j) {
-            for (int i = 0; i < nx - 1; ++i) {
-                int v0 = j * nx + i;
-                int v1 = v0 + 1;
-                int v2 = v0 + nx;
-                int v3 = v2 + 1;
-
-                if ((i + j) % 2 == 0) {
-                    // diagonal from v2 to v1
-                    idx[f++] = ChVector3i(v0, v1, v2);
-                    idx[f++] = ChVector3i(v1, v3, v2);
-                    // accumulate normals
-                    auto n1 = Vcross(V[v2] - V[v0], V[v1] - V[v0]);
-                    auto n2 = Vcross(V[v3] - V[v1], V[v2] - V[v1]);
-                    N[v0] += n1;
-                    N[v2] += n1;
-                    N[v1] += n1 + n2;
-                    N[v3] += n2;
-                } else {
-                    // diagonal from v0 to v3
-                    idx[f++] = ChVector3i(v0, v3, v2);
-                    idx[f++] = ChVector3i(v0, v1, v3);
-                    // accumulate normals
-                    auto n1 = Vcross(V[v3] - V[v0], V[v2] - V[v0]);
-                    auto n2 = Vcross(V[v1] - V[v0], V[v3] - V[v0]);
-                    N[v0] += n1 + n2;
-                    N[v3] += n1 + n2;
-                    N[v2] += n1;
-                    N[v1] += n2;
-                }
-            }
-        }
-
-        // normalise the accumulated normals
-        for (auto& n : N)
-            n.Normalize();
-
-        // set mesh and attach visual model
-        auto vmod = chrono_types::make_shared<ChVisualModel>();
-        auto tsh = chrono_types::make_shared<ChVisualShapeTriangleMesh>();
-        tsh->AddMaterial(m_vis_mat);
-        tsh->SetName("HeightfieldVisual");
-        tsh->SetMesh(vis_mesh, false);  // no material set other than colour
-        tsh->SetMutable(false);
-        vmod->AddShape(tsh);
-        m_body->AddVisualModel(vmod);
+        m_body->AddVisualModel(chrono_types::make_shared<ChVisualModel>());
+        auto mesh_visual = chrono_types::make_shared<ChVisualShapeTriangleMesh>();
+        mesh_visual->AddMaterial(m_vis_mat);
+        mesh_visual->SetName("HeightfieldVisual");
+        mesh_visual->SetMesh(m_vis_mesh, false);
+        mesh_visual->SetMutable(false);
+        m_body->AddVisualShape(mesh_visual);
     }
 }
 

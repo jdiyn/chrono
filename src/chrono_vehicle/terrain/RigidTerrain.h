@@ -177,16 +177,16 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
 
     /// Build a j=0 bottom heightfield patch from a grayscale image file.
     /// The image is scaled to the physical extents (sizeX sizeY) and to the
-    /// height range between hMin and hMax
+    /// height range between hMin and hMax.
+    /// visualisation is alwasy set to true
     std::shared_ptr<Patch> AddPatch(std::shared_ptr<ChContactMaterial> material,
                                     const ChCoordsys<>& pos,
                                     const std::string& heightmap_file,
-                                    double sizeX,  ///< metres (X width)
-                                    double sizeY,  ///< metres (Y length)
+                                    double scaled_sizeX,  ///< metres (X width)
+                                    double scaled_sizeY,  ///< metres (Y length)
                                     double hMin,   ///< minimum terrain height
                                     double hMax,   ///< maximum terrain height
-                                    double sweep_radius = 0.005,
-                                    bool visualize = true);
+                                    double sweep_radius = 0.005);
 
 
     /// Initialize all defined terrain patches.

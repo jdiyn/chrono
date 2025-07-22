@@ -31,6 +31,7 @@ subject to the following restrictions:
 #include "BulletCollision/BroadphaseCollision/cbtBroadphaseInterface.h"
 #include "BulletCollision/BroadphaseCollision/cbtDbvt.h"
 #include "BulletCollision/CollisionShapes/cbtCEtriangleShape.h" //***CHRONO***
+#include "BulletCollision/CollisionShapes/cbtHeightfieldChronoTerrainShape.h" //***CHRONO***
 #include "LinearMath/cbtAabbUtil2.h"
 #include "LinearMath/cbtQuickprof.h"
 #include "LinearMath/cbtSerializer.h"
@@ -1411,6 +1412,30 @@ void cbtCollisionWorld::debugDrawObject(const cbtTransform& worldTransform, cons
 				getDebugDrawer()->drawPlane(planeNormal, planeConst, worldTransform, color);
 				break;
 			}
+            case TERRAIN_SHAPE_PROXYTYPE: /* ***CHRONO*** */
+            {
+                const auto* hf = static_cast<const cbtHeightfieldChronoTerrainShape*>(shape);
+                // decimate so never push more than 4000 points (shouldn't need higher res for debug draw)
+                const auto& VC = hf->getVertexCache();
+                const int tot = (int)VC.size();
+                //const int step = tot > 4096 ? 1 + int(std::sqrt(double(tot) / 4096.0)) : 1;
+                const int step = 1;  // draw every grid point. Change this if you want to decimate the grid
+
+                const int W = hf->getWidth();  // grid size
+                const int L = hf->getLength();
+
+                for (int i = 0; i < tot; i += step) {
+                    const cbtVector3 Pw = worldTransform * VC[i];
+                    //getDebugDrawer()->drawContactPoint(Pw, cbtVector3(0, 0, 0), 0 /*dist*/, 0 /*life*/, color);
+					// draw grid 'squares'
+                    const int x = i % W, z = i / W;
+                    if (x + step < W)  // X neighbour
+                        getDebugDrawer()->drawLine(Pw, worldTransform * VC[i + step], color);
+                    if (z + step < L)  // Z neighbour
+                        getDebugDrawer()->drawLine(Pw, worldTransform * VC[i + step * W], color);
+                }
+                break;
+            }
 			default:
 			{
 				/// for polyhedral shapes
