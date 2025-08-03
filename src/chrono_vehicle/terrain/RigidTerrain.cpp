@@ -315,17 +315,6 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     unsigned int n_verts = nv_x * nv_y;
     unsigned int n_faces = 2 * (nv_x - 1) * (nv_y - 1);
 
-
-        // Print out terrain patch info before creation
-    std::cout << "[AddPatch] nx=" << nv_x << " ny=" << nv_y << " x_scale=" << x_scale << " y_scale=" << y_scale
-              << " hMin=" << hMin
-              << " hMax=" << hMax << std::endl;
-    for (int idx = 0; idx < 8; ++idx)  // print first 8 heights for sample
-        std::cout << "[AddPatch] heisghtscale[" << idx << "] = " << h_scale << std::endl;
-
-
-
-
     // Resize mesh arrays
     patch->m_trimesh = chrono_types::make_shared<ChTriangleMeshConnected>();
     patch->m_trimesh->GetCoordsVertices().resize(n_verts);
@@ -430,9 +419,6 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     }
 
     auto mesh_name = filesystem::path(heightmap_file).stem();
-
-
-
 
     // Cache patch parameters
     patch->m_radius = ChVector3d(length, width, (hMax - hMin)).Length() / 2;
@@ -896,16 +882,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     // convert to a bullet up axis (0,1,2) - i.e. 0=x, 1=y, 2=z
     int upAxis = (std::fabs(v.x()) > std::fabs(v.y()) && std::fabs(v.x()) > std::fabs(v.z())) ? 0
                  : (std::fabs(v.y()) > std::fabs(v.z()))                                      ? 1
-                                                         /* remainder is Z=2 */               : 2;
-
-
-    // Print out terrain patch info before creation
-    std::cout << "[AddPatch] nx=" << nx << " ny=" << ny << " dimX=" << dimX << " dimY=" << dimY << " hMin=" << hmin
-              << " hMax=" << hmax << std::endl;
-    for (int idx = 0; idx < 8; ++idx)  // print first 8 heights for sample
-        std::cout << "[AddPatch] heights[" << idx << "] = " << hf_heights[idx] << std::endl;
-    std::cout << "[AddPatch] World Up axis: " << upAxis << std::endl;
-
+                                                         /* Z=2 */                            : 2;
 
     // build a single btHeightfieldTerrainShape
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
@@ -927,18 +904,15 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     patch->m_length = dimY;
     patch->m_heights = std::move(hf_heights);   // easy grab the height data across to the member data
 
-    // if visualise is true, we build in intialisation of the patch
-
-
-    // Visualization mesh builder if visualize is true
+    // Visualisation mesh builder if visualise is true
     if (visualize) {
-        // Construct a triangular mesh for visualization
+        // Construct a triangular mesh for visualisation
         double dx = dimX / (nx - 1);
         double dy = dimY / (ny - 1);
         unsigned int n_verts = nx * ny;
         unsigned int n_faces = 2 * (nx - 1) * (ny - 1);
 
-        // Initialize the visualization mesh
+        // Initialize the mesh
         patch->m_vis_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
         auto& vertices = patch->m_vis_mesh->GetCoordsVertices();
         auto& normals = patch->m_vis_mesh->GetCoordsNormals();
@@ -1046,16 +1020,8 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     const int ny = img.GetHeight();
     double scale = (hMax - hMin) / img.GetRange();
 
-    std::cout << "[DEBUG - IMAGE BASED HEIGHTFIELD] Loaded heightmap: " << heightmap_file << std::endl;
-    std::cout << "[DEBUG] Dimensions: nx=" << nx << " ny=" << ny << std::endl;
-    std::cout << "[DEBUG] Height range: hMin=" << hMin << " hMax=" << hMax << std::endl;
-    std::cout << "[DEBUG] Image gray range: " << img.GetRange() << " scale=" << scale << std::endl;
-
-   // pos.pos.z() = 0;
     // Compute centre as bullet heightfield expects heights to be centered around 0.0
     double centre = 0.5 * (hMin + hMax);
-
-    std::cout << "[DEBUG] Centre height: " << centre << std::endl;
 
     // Build bottom ro first height vector (centered)
     std::vector<double> heights;
@@ -1068,14 +1034,6 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
           //  heights.emplace_back(hMin + img.Gray(i, j) * scale - centre); // precentre the heights - input them directly
         }
     }
-
-    std::cout << "[DEBUG] Sample heights (first 8):" << std::endl;
-    for (int idx = 0; idx < 8 && idx < heights.size(); ++idx) {
-        std::cout << "[DEBUG] heights[" << idx << "] = " << heights[idx] << std::endl;
-    }
-
-    auto mm = std::minmax_element(heights.begin(), heights.end());
-    std::cout << "[HF DEBUG] true height span: " << *mm.first << " … " << *mm.second << std::endl;
 
     //// Quick grid-coverage check: every i,j slot must hold a finite value
     //for (int j = 0; j < ny; ++j)

@@ -162,10 +162,12 @@ class ChApi ChCollisionSystemBullet : public ChCollisionSystem {
     cbtCollisionAlgorithmCreateFunc* m_collision_seg_seg;
     cbtCollisionAlgorithmCreateFunc* m_collision_cvx_height;
     cbtCollisionAlgorithmCreateFunc* m_collision_height_cvx;
+    cbtCollisionAlgorithmCreateFunc* m_collision_sphere_height;
+    cbtCollisionAlgorithmCreateFunc* m_collision_height_sphere;
 
-    // CreateFunc to handle any convex vs. heightfield (TERRAIN_SHAPE_PROXYTYPE)
-    cbtConvexConcaveCollisionAlgorithm::CreateFunc* m_ccCreate;
-    cbtConvexConcaveCollisionAlgorithm::SwappedCreateFunc* m_ccCreateSwapped;
+    // concave vs heightfield us processalltriangles
+    cbtCollisionAlgorithmCreateFunc* m_collision_concave_height;
+    cbtCollisionAlgorithmCreateFunc* m_collision_height_concave;
 
     void* m_tmp_mem;
     cbtCollisionAlgorithmCreateFunc* m_emptyCreateFunc;

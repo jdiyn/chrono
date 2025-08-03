@@ -210,19 +210,6 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
       m_vboundsGridWidth(0),
       m_vboundsGridLength(0) {
 
-
-
-    std::cout << "\n IN CONSTRUCTOR ************** \n" << "[HFShape] Construct: W=" << heightStickWidth << " L=" << heightStickLength << " minH=" << minH
-              << " maxH=" << maxH << " scale=" << scale << " upAxis=" << up << " hfield ptr=" << (void*)data
-              << std::endl;
-
-    for (int i = 0; i < 8; ++i)  // sample first 8 height values
-        std::cout << "[HFShape] h[" << i << "]=" << data[i] << std::endl;
-
-
-
-
-
     // initialise member variables
     m_shapeType = TERRAIN_SHAPE_PROXYTYPE;
     cbtAssert(heightStickWidth > 1 && heightStickLength > 1 && minH <= maxH && up >= 0 && up < 3);
@@ -251,17 +238,6 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     // build caching first time
     buildQuadExtents();
     buildVertexCache();
-
-    std::cout << "\n ******* In constructor after build quad and build vertex**** \n" << "[HFShape] m_localAabbMin: " << m_localAabbMin[m_upAxis]
-              << " m_localAabbMax: " << m_localAabbMax[m_upAxis] << " m_localOrigin: " << m_localOrigin[m_upAxis]
-              << " m_width=" << m_width << " m_length=" << m_length << std::endl;
-
-    for (int i = 0; i < 8 && i < m_vertexCache.size(); ++i)
-        std::cout << "[HFShape] raw_height[" << i
-                  << "]=" << getRawHeightFieldValue(i % m_heightStickWidth, i / m_heightStickWidth)
-                  << " centered_height="
-                  << (getRawHeightFieldValue(i % m_heightStickWidth, i / m_heightStickWidth) - m_localOrigin[m_upAxis])
-                  << " vertexCache[" << i << "][" << m_upAxis << "]=" << m_vertexCache[i][m_upAxis] << std::endl;
 }
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
@@ -490,7 +466,23 @@ void cbtHeightfieldChronoTerrainShape::processAllTriangles(cbtTriangleCallback* 
         }
 }
 
-
+// Extract planar (u,v) from local unscaled Pl based on upAxis
+void cbtHeightfieldChronoTerrainShape::getUV(const cbtVector3& Pl, cbtScalar& u, cbtScalar& v) const {
+    switch (getUpAxis()) {
+        case 0:
+            u = Pl.y();
+            v = Pl.z();
+            break;  // X-up
+        case 1:
+            u = Pl.x();
+            v = Pl.z();
+            break;  // Y-up
+        default:
+            u = Pl.x();
+            v = Pl.y();
+            break;  // Z-up
+    }
+}
 
 
 // Simple bilinear height interpolation given integer cell indices and fractional offsets
@@ -768,13 +760,13 @@ bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFr
                                                    const cbtVector3& queryPointWorld,
                                                    cbtVector3& outSurfacePointWorld,
                                                    cbtVector3& outSurfaceNormalWorld) const {
-    // 1) World → shape local (includes centering+scaling)
+    // World to shape local (includes centering+scaling)
     cbtVector3 localPoint = terrainFrame.invXform(queryPointWorld);
 
-    // 2) Remove the shape’s localScaling
+    // Remove the shape’s localScaling
     localPoint = localPoint * getInverseLocalScaling();
 
-    // 3) Determine planar coordinates (u,v) in centered local units
+    // Determine planar coordinates (u,v) in centered local units
     cbtScalar u, v;
     switch (m_upAxis) {
         case 0:
@@ -791,19 +783,19 @@ bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFr
             break;  // Z‐up
     }
 
-    // 4) Query height & local normal (both centered, un‑scaled)
+    // Query height & local normal (both centered, un‑scaled)
     cbtScalar heightCentered;
     cbtVector3 normalCentered;
     queryHeightAndGradient(u, v, heightCentered, normalCentered);
 
-    // 5) Build the local‐space surface point (centered, un‑scaled)
+    // Build the local‐space surface point (centered, un‑scaled)
     localPoint[m_upAxis] = heightCentered;
 
-    // 6) Re‑apply centering + localScaling to get “full” local coords
+    // Re‑apply centering + localScaling to get “full” local coords
     localPoint[m_upAxis] += m_localOrigin[m_upAxis];
     localPoint = localPoint * getLocalScaling();
 
-    // 7) Transform back to world
+    // Transform back to world
     outSurfacePointWorld = terrainFrame * localPoint;
     outSurfaceNormalWorld = (terrainFrame.getBasis() * normalCentered).normalized();
 

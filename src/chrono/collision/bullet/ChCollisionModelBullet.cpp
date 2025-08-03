@@ -397,7 +397,6 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     // set narrowphase margin to 0
     bt_hf->setMargin(full_margin); // Ensure this is set so that objects DONT sink through the heightfield
 
-
     bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up. 16 should cover most cases
     
     this->bt_collision_object->setCollisionShape(bt_hf);

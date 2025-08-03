@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
     // add a sphere for testing
     auto my_obstacle2 = chrono_types::make_shared<ChBodyEasySphere>(1, 100, true, true, patch_mat);
     sys->Add(my_obstacle2);
-    my_obstacle2->SetPos(ChVector3d(3, -3, 3));
+    my_obstacle2->SetPos(ChVector3d(3.2, -3, 3));
     my_obstacle2->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/spheretexture.png"));
 
 

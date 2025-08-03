@@ -35,10 +35,11 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     };
 
     void sampleHeight(cbtScalar xu, cbtScalar zv, cbtScalar & outH, cbtVector3 & outGrad) const;
-    // (optionally – tiny helpers for width/length used by the algo)
+    // stick width
     int getWidth() const {
         return m_heightStickWidth;
     }
+    // stick length
     int getLength() const {
         return m_heightStickLength;
     }
@@ -137,6 +138,9 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     /// Scaled height at integer grid coordinates (x,z)
     cbtScalar getHeight(int x, int z) const;
 
+    // get the U and V coordinates at a point
+    void getUV(const cbtVector3& Pl, cbtScalar& u, cbtScalar& v) const;
+
     /// Sample height‑field at an arbitrary world point.
     /// Return false when (Pw) projects outside the X/Z (or Y/Z etc.) extent.
     bool sampleWorld(const cbtTransform& terrainFrame,  // world‑space frame of the shape
@@ -188,7 +192,7 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     //// replicate Bullet’s getVertex (including centering by m_localOrigin)
     void getVertex(int x, int y, cbtVector3& vertex) const;
 
-
+    
     /// In cbtHeightfieldChronoTerrainShape (in place of sampleWorld):
     /// Given a point in **local, unscaled, centered** grid coords (Pu,Pv,),
     /// return centered+scaled height and normalized world‐gradient.
