@@ -388,22 +388,23 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     // if someone wants to use the standard algo processalltriangles path
     bt_hf->setUseDiamondSubdivision(true);
 
-    // put it into world scale units! Important: do not double scale down the line!
+    // put it into world scale units! Important: do not double scale down the line!!!!!
     bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
                                       hf->GetFieldLength() / (hf->GetLengthSamples() - 1), hf->GetHeightScale()));
 
     // apply margin in one go
     cbtScalar full_margin = GetSuggestedFullMargin();
-    // set narrowphase margin to 0
+
+    std::cout << "full margin is:" << full_margin << std::endl;
+
     bt_hf->setMargin(full_margin); // Ensure this is set so that objects DONT sink through the heightfield
 
+    // TODO - this is likely not necessary anymore!
     bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up. 16 should cover most cases
-    
-    this->bt_collision_object->setCollisionShape(bt_hf);
 
-    this->bt_collision_object->setCollisionFlags(this->bt_collision_object->getCollisionFlags() |
+    bt_collision_object->setCollisionShape(bt_hf);
+    bt_collision_object->setCollisionFlags(bt_collision_object->getCollisionFlags() |
                                                  cbtCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
-
     // hand off to the normal inject routine
     injectShape(hf, std::shared_ptr<cbtCollisionShape>(bt_hf), frame);
 }

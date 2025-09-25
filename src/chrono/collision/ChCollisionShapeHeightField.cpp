@@ -78,7 +78,7 @@ ChAABB ChCollisionShapeHeightField::GetBoundingBox() const {
     return ChAABB(lo, hi);
 }
 
-
+////////////// -- TODO --- possibly no longer needed?
 //  Analytic "vertical rayhit" on a heightfield patch
 //  returns true - query projects onto the patch rectangle or false - outside
 bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
@@ -201,6 +201,8 @@ bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
 
     return true;
 }
+
+
 void ChCollisionShapeHeightField::ArchiveOut(ChArchiveOut& archive_out) {
     archive_out.VersionWrite<ChCollisionShapeHeightField>();
     archive_out << CHNVP(m_nx);

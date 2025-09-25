@@ -148,6 +148,22 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
                      cbtVector3& SurfacePoint,                    // surface point (world)
                      cbtVector3& SurfaceNormal) const;         // surface normal (world)
 
+
+    /// rolling friction coefficient setters and getters
+    void setRollingFriction(cbtScalar friction) {
+        m_rollingFriction = friction;
+    }
+    cbtScalar getRollingFriction() const {
+        return m_rollingFriction;
+    }
+
+    void setSpinningFriction(cbtScalar friction) {
+        m_spinningFriction = friction;
+    }
+    cbtScalar getSpinningFriction() const {
+        return m_spinningFriction;
+    }
+
   protected:
     // raw height data (must outlive this shape)
     const cbtScalar* m_heightfieldData;
@@ -177,6 +193,11 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     int m_vboundsGridWidth;
     int m_vboundsGridLength;
     int m_vboundsChunkSize;
+
+    /// rolling friction var
+    cbtScalar m_rollingFriction{0.0f};
+    cbtScalar m_spinningFriction{0.0f};
+
 
     // caching quads
     struct QuadExtents {

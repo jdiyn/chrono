@@ -114,23 +114,20 @@ ChCollisionSystemBullet::ChCollisionSystemBullet() : m_debug_drawer(nullptr) {
      m_collision_height_cvx = new cbtConvexHeightfieldAlgorithm::SwappedCreateFunc();
 
      for (int proxy = BOX_SHAPE_PROXYTYPE; proxy < CONCAVE_SHAPES_START_HERE; ++proxy) {
-         if (proxy == TERRAIN_SHAPE_PROXYTYPE || SPHERE_SHAPE_PROXYTYPE)
+         if (proxy == TERRAIN_SHAPE_PROXYTYPE || proxy == SPHERE_SHAPE_PROXYTYPE)
              continue;
          bt_dispatcher->registerCollisionCreateFunc(proxy, TERRAIN_SHAPE_PROXYTYPE, m_collision_cvx_height);
          bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, proxy, m_collision_height_cvx);
      }
-
-     // Explicit registration for CE triangles
-     bt_dispatcher->registerCollisionCreateFunc(CE_TRIANGLE_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE,
-                                                m_collision_cvx_height);
-     bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, CE_TRIANGLE_SHAPE_PROXYTYPE,
-                                                m_collision_height_cvx);
-
      //  Custom collision for terrain vs sphere
      m_collision_sphere_height = new cbtSphereHeightfieldAlgorithm::CreateFunc();
      m_collision_height_sphere = new cbtSphereHeightfieldAlgorithm::SwappedCreateFunc();
      bt_dispatcher->registerCollisionCreateFunc(SPHERE_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE, m_collision_sphere_height);
      bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, SPHERE_SHAPE_PROXYTYPE, m_collision_height_sphere);
+
+     // Explicit registration for CE triangles
+     bt_dispatcher->registerCollisionCreateFunc(CE_TRIANGLE_SHAPE_PROXYTYPE, TERRAIN_SHAPE_PROXYTYPE, m_collision_cvx_height);
+     bt_dispatcher->registerCollisionCreateFunc(TERRAIN_SHAPE_PROXYTYPE, CE_TRIANGLE_SHAPE_PROXYTYPE, m_collision_height_cvx);
 
      // register gjk for concave vs terrain (uses processalltriangles)
      m_collision_concave_height = new cbtConvexConcaveCollisionAlgorithm::CreateFunc();
