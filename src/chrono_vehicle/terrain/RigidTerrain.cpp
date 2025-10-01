@@ -844,8 +844,8 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 //----------------------------------------------------------------------------------------------
 //  Heightfield patch, j=0 type - note heights are entered directly, not scaled [0..1] type.
 std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
-                                                                       const ChCoordsys<>& pos,            // patch coord
-                                                                       const std::vector<double>& heights, // height array - j=0 is BOTTOM of field
+                                                                       const ChCoordsys<>& pos,            // patch coord - centered BASE
+                                                                       const std::vector<double>& heights_absolute, // height array - j=0 is BOTTOM of field
                                                                        int grid_nx,  // resolution in X
                                                                        int grid_ny,  // resolution in Y
                                                                        double dimX,  // physical width along X (m)
@@ -866,17 +866,24 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     // For simplicity, chrono is kept at double
     int nx = grid_nx;
     int ny = grid_ny;
-    if ((int)heights.size() != nx * ny)
+    if ((int)heights_absolute.size() != nx * ny)
         throw std::runtime_error("AddPatch: heights.size() mismatch");
-    std::vector<double> hf_heights(nx * ny);
-    double hmin = heights[0], hmax = heights[0];
-    for (int idx = 0; idx < nx * ny; ++idx) {
-        double h = heights[idx];
-        hf_heights[idx] = h;
-        hmin = std::min(hmin, h);
-        hmax = std::max(hmax, h);
-    }
 
+    // find min/max height and centre the heights around zero
+    double hmin = *std::min_element(heights_absolute.begin(), heights_absolute.end());
+    double hmax = *std::max_element(heights_absolute.begin(), heights_absolute.end());
+    
+    // no centreing - using the absolute heights directly
+    // double centre = 0.5 * (hmin + hmax);
+
+
+
+    //std::vector<double> heights_centered(nx * ny);
+    //for (int idx = 0; idx < nx * ny; ++idx) {
+    //    heights_centered[idx] = heights_absolute[idx] - centre;  // **CENTER**
+    //}
+
+        
     // get the world up
     ChVector3d v = ChWorldFrame::Vertical();
     // convert to a bullet up axis (0,1,2) - i.e. 0=x, 1=y, 2=z
@@ -884,13 +891,17 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
                  : (std::fabs(v.y()) > std::fabs(v.z()))                                      ? 1
                                                          /* Z=2 */                            : 2;
 
+    // get the centered min/max values
+ //   double hmin_c = hmin - centre;
+ //   double hmax_c = hmax - centre;
+
     // build a single btHeightfieldTerrainShape
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
                                                       dimX, dimY,                    // field extent along X/Y
-                                                      hf_heights,                    // row-major double array, j=0 is the bottom row!!! Also, double input
+                                                      heights_absolute,              // row-major double array, j=0 is the bottom row!!! Also, double input
                                                       1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
-                                                      static_cast<float>(hmin),
-                                                      static_cast<float>(hmax),      // min and max heights (may be unecesary with custom bullet heightfield)
+                                                      static_cast<float>(hmin),      // min height
+                                                      static_cast<float>(hmax),      // max height
                                                       upAxis,                        // set upAxis as 0,1,2 correspond to xyz
                                                       sweep_sphere_radius,           // swept sphere radius
                                                       true                           // flip every other quad (robust mesh)
@@ -902,7 +913,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     patch->m_ny = ny;
     patch->m_width = dimX;
     patch->m_length = dimY;
-    patch->m_heights = std::move(hf_heights);   // easy grab the height data across to the member data
+    patch->m_heights = std::move(heights_absolute);   // easy grab the height data across to the member data
 
     // Visualisation mesh builder if visualise is true
     if (visualize) {
@@ -939,13 +950,16 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
         double halfY = dimY / 2.0;
         double x_scale = 1.0 / (nx - 1);
         double y_scale = 1.0 / (ny - 1);
-        for (int iy = 0; iy < ny; ++iy) {  // j=0 bottom
+        for (int iy = 0; iy < ny; ++iy) {
             double y = iy * dy - halfY;
             for (int ix = 0; ix < nx; ++ix) {
                 double x = ix * dx - halfX;
-                double z = heights[iy * nx + ix];  // heights row-major, j=0 bottom
+
+                // Use heights RELATIVE TO BASE (minHeight at z=0 in local frame)
+                double z = patch->m_heights[iy * nx + ix] - hmin;  // Offset to BASE
+
                 vertices[iv] = ChVector3d(x, y, z);
-                normals[iv] = ChVector3d(0, 0, 0);  // Initialize to zero
+                normals[iv] = ChVector3d(0, 0, 0);
                 uvs[iv] = ChVector2d(ix * x_scale, iy * y_scale);
                 ++iv;
             }
@@ -1021,7 +1035,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     double scale = (hMax - hMin) / img.GetRange();
 
     // Compute centre as bullet heightfield expects heights to be centered around 0.0
-    double centre = 0.5 * (hMin + hMax);
+    //double centre = 0.5 * (hMin + hMax);
 
     // Build bottom ro first height vector (centered)
     std::vector<double> heights;
@@ -1029,8 +1043,11 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     for (int j = ny - 1; j >= 0; --j) {
         for (int i = 0; i < nx; ++i) {
             /* CORRECT */
-            double h = hMin + (img.Gray(i, j)) * scale;
-            heights.emplace_back(h);  // store raw heights - no centering
+            double h_absolute = hMin + (img.Gray(i, j)) * scale;
+           // double h_centered = h_absolute - centre; // centre the heights for bullet!!
+            heights.emplace_back(h_absolute);         // **ABSOLUTE!**
+            // both here deprecated below
+            //  heights.emplace_back(h);  // store raw heights - no centering
           //  heights.emplace_back(hMin + img.Gray(i, j) * scale - centre); // precentre the heights - input them directly
         }
     }
@@ -1044,7 +1061,7 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     //    }
 
 
-    // Call the existing heightfield AddPatch function with the heights and args
+    // Call the existing heightfield AddPatch function with the heights and args - IT WILL HANDLE CENTERING
     auto patch = AddPatch(material, pos, heights, nx, ny, scaled_sizeX, scaled_sizeY, sweep_radius, visualize);
 
     // set the name - todo

@@ -151,16 +151,16 @@ int main(int argc, char* argv[]) {
         auto patch = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(-10, 0, 0), QUNIT), 20, 10);
         patch->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 10, 5);
     }
-    if (patches[0] == PatchType::RIGID) {
-        // x: [0 ... 10]
-        auto patch0 = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(5, 0, -1), QUNIT), hm_concave, 10, 10, 0, 1);
-        patch0->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 5, 5);
-    }
-    if (patches[1] == PatchType::RIGID) {
-        // x: [10 ... 20]
-        auto patch1 = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(15, 0, 0), QUNIT), hm_convex, 10, 10, 0, 1);
-        patch1->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 5, 5);
-    }
+    //if (patches[0] == PatchType::RIGID) {
+    //    // x: [0 ... 10]
+    //    auto patch0 = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(5, 0, -1), QUNIT), hm_concave, 10, 10, 0, 1);
+    //    patch0->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 5, 5);
+    //}
+    //if (patches[1] == PatchType::RIGID) {
+    //    // x: [10 ... 20]
+    //    auto patch1 = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(15, 0, 0), QUNIT), hm_convex, 10, 10, 0, 1);
+    //    patch1->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 5, 5);
+    //}
     {
         // x: [20 ... 40]
         auto patch = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(30, 0, 0), QUNIT), 20, 10);

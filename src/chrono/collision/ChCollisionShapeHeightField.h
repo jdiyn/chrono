@@ -40,7 +40,7 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
                                 int ny,                                         ///< [in] number of height samples along Y
                                 double dimX,                                    ///< [in] physical width along X (meters)
                                 double dimY,                                    ///< [in] physical length along Y (meters)
-                                const std::vector<double>& heights,             ///< [in] height array (row-major: j*nx + i) ---- always double input, if single bullet, gets coverted in constructor
+                                const std::vector<double>& heights_absolute,    ///< [in] height array (row-major: j*nx + i) ---- always double input, if single bullet, gets coverted in constructor
                                 float heightScale,                              ///< [in] multiplier applied to raw height values
                                 float minHeight,                                ///< [in] minimum height value (for AABB centring)
                                 float maxHeight,                                ///< [in] maximum height value (for AABB centring)
@@ -55,11 +55,15 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     int               GetLengthSamples()  const { return m_ny; }
     double            GetFieldWidth()     const { return m_width; }
     double            GetFieldLength()    const { return m_length; }
-    const double* GetHeights() const { return m_heights.data(); }
+    // Return NON-CONST pointer for Bullet shape creation (in ch collision model bullet)
+   // double* GetHeights() { return m_heights.data(); }              // Non-const version
+    const double* GetHeights() const { return m_heights.data(); }  // ABSOLUTE HEIGHTS! NOT SHIFTED HEIGHTS!
 #ifndef BT_USE_DOUBLE_PRECISION
     // if bullet is single precision
+   // float* GetHeightsFloat() { return m_heights_f.data(); }
     const float* GetHeightsFloat() const { return m_heights_f.data(); }
-#endif
+ #endif
+ 
     float             GetHeightScale()    const { return m_heightScale; }
     float             GetMinHeight()      const { return m_minHeight; }
     float             GetMaxHeight()      const { return m_maxHeight; }

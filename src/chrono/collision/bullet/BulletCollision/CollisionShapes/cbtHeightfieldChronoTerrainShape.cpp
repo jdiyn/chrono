@@ -12,7 +12,7 @@
 // Authors: Josh Diyn
 // =============================================================================
 // This is not a standard bullet heightfield class, but a Chrono-specific one
-// which draws upon the bullet version
+// which is inspired by upon the bullet version but aims to improve it
 // =============================================================================
 
 #include "cbtHeightfieldChronoTerrainShape.h"
@@ -190,50 +190,66 @@ cbtHeightfieldChronoTerrainShape::Range cbtHeightfieldChronoTerrainShape::minmax
 
 cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightStickWidth,
                                                                    int heightStickLength,
-                                                                   const cbtScalar* data,
+                                                                   const cbtScalar* heightfieldData, ///< absolute height data
                                                                    cbtScalar scale,
-                                                                   cbtScalar minH,
-                                                                   cbtScalar maxH,
-                                                                   int up,
+                                                                   cbtScalar minH, ///< absolute min, not centred
+                                                                   cbtScalar maxH,  ///< absolute max, not centred
+                                                                   int upAxis,
                                                                    bool flip)
     : m_heightStickWidth(heightStickWidth),
       m_heightStickLength(heightStickLength),
       m_heightScale(scale),
-      m_heightfieldData(data),
+//      m_heightfieldData(heightfieldData), // init below
       m_minHeight(minH),
       m_maxHeight(maxH),
-      m_upAxis(up),
+      m_upAxis(upAxis),
       m_flipQuadEdges(flip),
       m_useDiamondSubdivision(false),
       m_useZigzagSubdivision(false),
       m_vboundsChunkSize(0),
       m_vboundsGridWidth(0),
-      m_vboundsGridLength(0) {
+      m_vboundsGridLength(0),
+      m_ownsHeightData(true) {  // we own the data, so copy it
 
     // initialise member variables
     m_shapeType = TERRAIN_SHAPE_PROXYTYPE;
     cbtAssert(heightStickWidth > 1 && heightStickLength > 1 && minH <= maxH && up >= 0 && up < 3);
+
     m_width = cbtScalar(heightStickWidth - 1);
     m_length = cbtScalar(heightStickLength - 1);
-    // build unscaled local AABB & center
-    switch (up) {
-        case 0:
-            m_localAabbMin.setValue(minH - (minH + maxH) / 2, -m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5));
-            m_localAabbMax.setValue(maxH - (minH + maxH) / 2, m_width * cbtScalar(0.5), m_length * cbtScalar(0.5));
+
+    // BASE POSITIONING!!
+    // The body frame is positioned at the BASE (z=0 in local coords corresponds to minHeight)
+    // So we offset heights by -minHeight to make the base at local z=0
+
+    // allocate and copy the heightfield data, shifting so that BASE is at 0
+    int numSamples = heightStickWidth * heightStickLength;
+    m_heightfieldData = new cbtScalar[numSamples];
+    for (int i = 0; i < numSamples; ++i) {
+        m_heightfieldData[i] = heightfieldData[i] - minH;  // Shift so BASE is at 0
+    }
+
+    // Local origin is at the BASE (local z=0)
+    m_localOrigin = cbtVector3(0, 0, 0);
+    // NO vertical offset - the base IS the origin - to follow the standard of other heightfields (unity/unreal/etc)
+
+    // Build AABB with BASE at origin
+    cbtScalar heightRange = (maxH - minH) * scale;
+    switch (upAxis) {
+        case 0:  // X-up
+            m_localAabbMin.setValue(0, -m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5));
+            m_localAabbMax.setValue(heightRange, m_width * cbtScalar(0.5), m_length * cbtScalar(0.5));
             break;
-        case 1:
-            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), minH - (minH + maxH) / 2, -m_length * cbtScalar(0.5));
-            m_localAabbMax.setValue(m_width * cbtScalar(0.5), maxH - (minH + maxH) / 2, m_length * cbtScalar(0.5));
+        case 1:  // Y-up
+            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), 0, -m_length * cbtScalar(0.5));
+            m_localAabbMax.setValue(m_width * cbtScalar(0.5), heightRange, m_length * cbtScalar(0.5));
             break;
-        case 2:
-            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5), minH - (minH + maxH) / 2);
-            m_localAabbMax.setValue(m_width * cbtScalar(0.5), m_length * cbtScalar(0.5), maxH - (minH + maxH) / 2);
+        case 2:  // Z-up
+            m_localAabbMin.setValue(-m_width * cbtScalar(0.5), -m_length * cbtScalar(0.5), 0);
+            m_localAabbMax.setValue(m_width * cbtScalar(0.5), m_length * cbtScalar(0.5), heightRange);
             break;
     }
 
-    // here the origin should only center the height, not the X,Y coordinates
-    m_localOrigin = cbtVector3(0, 0, 0);
-    m_localOrigin[m_upAxis] = (minH + maxH) * cbtScalar(0.5);
 
     // build caching first time
     buildQuadExtents();
@@ -241,32 +257,63 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
 }
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
+    if (m_ownsHeightData && m_heightfieldData) {
+        delete[] m_heightfieldData;
+        m_heightfieldData = nullptr;
+    }
     clearAccelerator();
 }
 
 void cbtHeightfieldChronoTerrainShape::getAabb(const cbtTransform& tr, cbtVector3& aabbMin, cbtVector3& aabbMax) const {
+    // AABB half-extents in local space
     cbtVector3 half = (m_localAabbMax - m_localAabbMin) * (getLocalScaling() * cbtScalar(0.5));
 
-    // The only thickness Bullet’s broad‑phase sees
-    // If minHeight == maxHeight, the component on m_upAxis is ZERO here
-    // ----------------------------------------------------------------
-    const cbtScalar MIN_THICKNESS =
-        0.5f;  // 0.5m - you may want to set this even larger if your largest object is bigger!
+    // BASE center offset (half the height range)
+    cbtVector3 localCenter(0, 0, 0);
+    localCenter[m_upAxis] =
+        (m_localAabbMax[m_upAxis] - m_localAabbMin[m_upAxis]) * getLocalScaling()[m_upAxis] * cbtScalar(0.5);
+
+    // Minimum thickness for broadphase
+    const cbtScalar MIN_THICKNESS = 0.5f;
     if (half[m_upAxis] < MIN_THICKNESS)
         half[m_upAxis] = MIN_THICKNESS;
-    // ----------------------------------------------------------------
 
+    // Transform to world space
     cbtMatrix3x3 abs_b = tr.getBasis().absolute();
     cbtVector3 worldExtents(abs_b[0].dot(half), abs_b[1].dot(half), abs_b[2].dot(half));
     worldExtents += cbtVector3(getMargin(), getMargin(), getMargin());
 
-    cbtVector3 localCenter(0, 0, 0);
-    localCenter[m_upAxis] = (m_minHeight + m_maxHeight) * cbtScalar(0.5);
-    localCenter *= getLocalScaling();
-
     cbtVector3 worldCenter = tr(localCenter);
     aabbMin = worldCenter - worldExtents;
     aabbMax = worldCenter + worldExtents;
+}
+
+// Untested - dynamic height update
+void cbtHeightfieldChronoTerrainShape::updateHeight(int x, int y, cbtScalar newHeight_absolute) {
+    cbtAssert(x >= 0 && x < m_heightStickWidth && y >= 0 && y < m_heightStickLength);
+
+    // Convert absolute height to base-relative
+    m_heightfieldData[y * m_heightStickWidth + x] = newHeight_absolute - m_minHeight;
+
+    // Update cached data
+    buildVertexCache();  // Rebuild affected regions
+    if (m_vboundsChunkSize > 0) {
+        // Optionally: rebuild only affected chunks
+        buildAccelerator(m_vboundsChunkSize);
+    }
+}
+
+void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights_absolute, int numSamples) {
+    cbtAssert(numSamples == m_heightStickWidth * m_heightStickLength);
+
+    for (int i = 0; i < numSamples; ++i) {
+        m_heightfieldData[i] = newHeights_absolute[i] - m_minHeight;
+    }
+
+    buildVertexCache();
+    if (m_vboundsChunkSize > 0) {
+        buildAccelerator(m_vboundsChunkSize);
+    }
 }
 
 // accelerator build/clear
@@ -345,6 +392,7 @@ void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
 
     for (int y = 0; y < L; ++y)
         for (int x = 0; x < W; ++x) {
+            // Get height (already offset so BASE is at 0)
             cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale; // do we even need to scale again here??
 
             // grid → local before scaling
@@ -755,49 +803,68 @@ void cbtHeightfieldChronoTerrainShape::performRaycast(cbtTriangleCallback* callb
     }
 }
 
-// Get a world space point on the terrain at the given QueryPoint, if it is on the terrain
+// sampleWorld with minimised transform operations
 bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFrame,
                                                    const cbtVector3& queryPointWorld,
                                                    cbtVector3& outSurfacePointWorld,
                                                    cbtVector3& outSurfaceNormalWorld) const {
-    // World to shape local (includes centering+scaling)
-    cbtVector3 localPoint = terrainFrame.invXform(queryPointWorld);
+    // Transform to local unscaled space
+    const cbtVector3 invScale = getInverseLocalScaling();
+    const cbtVector3 queryLocal = terrainFrame.invXform(queryPointWorld) * invScale;
 
-    // Remove the shape’s localScaling
-    localPoint = localPoint * getInverseLocalScaling();
-
-    // Determine planar coordinates (u,v) in centered local units
+    // Extract planar coordinates
     cbtScalar u, v;
     switch (m_upAxis) {
         case 0:
-            u = localPoint.y();
-            v = localPoint.z();
-            break;  // X‐up
+            u = queryLocal.y();
+            v = queryLocal.z();
+            break;
         case 1:
-            u = localPoint.x();
-            v = localPoint.z();
-            break;  // Y‐up
+            u = queryLocal.x();
+            v = queryLocal.z();
+            break;
         default:
-            u = localPoint.x();
-            v = localPoint.y();
-            break;  // Z‐up
+            u = queryLocal.x();
+            v = queryLocal.y();
+            break;
     }
 
-    // Query height & local normal (both centered, un‑scaled)
-    cbtScalar heightCentered;
-    cbtVector3 normalCentered;
-    queryHeightAndGradient(u, v, heightCentered, normalCentered);
+    // Bounds check
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    if (u < -halfW || u > halfW || v < -halfL || v > halfL)
+        return false;
 
-    // Build the local‐space surface point (centered, un‑scaled)
-    localPoint[m_upAxis] = heightCentered;
+    // Query height and gradient (height is relative to BASE, i.e., local z=0)
+    cbtScalar terrainHeight_fromBase;
+    cbtVector3 gradientLocal;
+    queryHeightAndGradient(u, v, terrainHeight_fromBase, gradientLocal);
 
-    // Re‑apply centering + localScaling to get “full” local coords
-    localPoint[m_upAxis] += m_localOrigin[m_upAxis];
-    localPoint = localPoint * getLocalScaling();
+    if (gradientLocal.length2() < SIMD_EPSILON)
+        return false;
 
-    // Transform back to world
-    outSurfacePointWorld = terrainFrame * localPoint;
-    outSurfaceNormalWorld = (terrainFrame.getBasis() * normalCentered).normalized();
+    // Build surface point in local space (BASE at origin)
+    cbtVector3 surfacePointLocal;
+    switch (m_upAxis) {
+        case 0:
+            surfacePointLocal.setValue(terrainHeight_fromBase, u, v);
+            break;
+        case 1:
+            surfacePointLocal.setValue(u, terrainHeight_fromBase, v);
+            break;
+        default:
+            surfacePointLocal.setValue(u, v, terrainHeight_fromBase);
+            break;
+    }
+
+    // Apply scaling
+    surfacePointLocal *= getLocalScaling();
+
+    // Transform to world
+    outSurfacePointWorld = terrainFrame * surfacePointLocal;
+
+    cbtVector3 scaledGradient = gradientLocal * getLocalScaling();
+    outSurfaceNormalWorld = (terrainFrame.getBasis() * scaledGradient).normalized();
 
     return true;
 }

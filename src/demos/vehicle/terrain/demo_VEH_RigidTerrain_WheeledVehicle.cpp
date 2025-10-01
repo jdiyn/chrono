@@ -111,12 +111,12 @@ int main(int argc, char* argv[]) {
         patch3->SetColor(ChColor(0.5f, 0.5f, 0.8f));
         patch3->SetTexture(vehicle::GetDataFile("terrain/textures/dirt.jpg"), 6.0f, 6.0f);
 
-        auto patch4_mat = chrono_types::make_shared<ChContactMaterialNSC>();
-        patch4_mat->SetFriction(0.9f);
-        patch4_mat->SetRestitution(0.01f);
-        auto patch4 = terrain.AddPatch(patch4_mat, ChCoordsys<>(ChVector3d(0, 42, 0), QuatFromAngleZ(CH_PI_2)),
-                                       vehicle::GetDataFile("terrain/height_maps/concave.bmp"), 64.0, 64.0, 0.0, 3.0);
-        patch4->SetTexture(vehicle::GetDataFile("terrain/textures/grass.jpg"), 6.0f, 6.0f);
+        //auto patch4_mat = chrono_types::make_shared<ChContactMaterialNSC>();
+        //patch4_mat->SetFriction(0.9f);
+        //patch4_mat->SetRestitution(0.01f);
+        //auto patch4 = terrain.AddPatch(patch4_mat, ChCoordsys<>(ChVector3d(0, 42, 0), QuatFromAngleZ(CH_PI_2)),
+        //                               vehicle::GetDataFile("terrain/height_maps/concave.bmp"), 64.0, 64.0, 0.0, 3.0);
+        //patch4->SetTexture(vehicle::GetDataFile("terrain/textures/grass.jpg"), 6.0f, 6.0f);
     }
 
     if (false) {

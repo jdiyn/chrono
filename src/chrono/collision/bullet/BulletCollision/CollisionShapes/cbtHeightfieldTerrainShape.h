@@ -124,7 +124,8 @@ public:
 	  heightScale is needed for any integer-based heightfield data types.
 	 */
 	cbtHeightfieldTerrainShape(int heightStickWidth, int heightStickLength,
-							  const void* heightfieldData, cbtScalar heightScale,
+							  const void* heightfieldData,	///< aboslute heights are to be used. centred inside the class for bullet's own use
+							  cbtScalar heightScale,
 							  cbtScalar minHeight, cbtScalar maxHeight,
 							  int upAxis, PHY_ScalarType heightDataType,
 							  bool flipQuadEdges);

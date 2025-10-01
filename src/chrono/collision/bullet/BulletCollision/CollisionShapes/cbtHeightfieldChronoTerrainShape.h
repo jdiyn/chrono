@@ -48,9 +48,9 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     }
 
     /// constructor generic with cbtscalar - shoul dhandle either doubles or float
-    cbtHeightfieldChronoTerrainShape(int heightStickWidth, int heightStickLength,
-                                     const cbtScalar* heightfieldData,  // length = width*length
-                                     cbtScalar heightScale, cbtScalar minHeight, cbtScalar maxHeight,
+    cbtHeightfieldChronoTerrainShape(int heightStickWidth, int heightStickLength,  // length = width*length
+                                     const cbtScalar* heightfieldData,                  ///< absolute height data, row-major, j=0 is bottom row
+                                     cbtScalar heightScale, cbtScalar minHeight_centered, cbtScalar maxHeight_centered,
                                      int upAxis,  // 0=X,1=Y,2=Z
                                      bool flipQuadEdges);
 
@@ -164,9 +164,16 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         return m_spinningFriction;
     }
 
+    // Future: Method to update heights dynamically
+    void updateHeight(int x, int y, cbtScalar newHeight_absolute);
+    void updateHeights(const cbtScalar* newHeights_absolute, int numSamples);
+
+
   protected:
-    // raw height data (must outlive this shape)
-    const cbtScalar* m_heightfieldData;
+    // raw height data (non const -- owned by this shape)
+    cbtScalar* m_heightfieldData;
+    bool m_ownsHeightData;  // Track if allocated the data
+
 
     int m_heightStickWidth; // number of height samples
     int m_heightStickLength; // number of height samples

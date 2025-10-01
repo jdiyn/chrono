@@ -29,7 +29,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
                                                          int ny,
                                                          double dimX,
                                                          double dimY,
-                                                         const std::vector<double>& heights, // double input only - bullet will convert in its constrcutor if using floats
+                                                         const std::vector<double>& heights_absolute, // double input only - bullet will convert in its constrcutor if using floats
                                                          float heightScale,
                                                          float minHeight,
                                                          float maxHeight,
@@ -41,7 +41,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
       m_ny(ny),
       m_width(dimX),
       m_length(dimY),
-      m_heights(heights),
+      m_heights(heights_absolute),
       m_heightScale(heightScale),
       m_minHeight(minHeight),
       m_maxHeight(maxHeight),
@@ -51,15 +51,16 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
     m_type = Type::HEIGHTFIELD;
 
         // store the vertical centre that bullet does so SampleHeight can restore absolute heights correctly
-    m_heightCentre = 0.5 * (m_minHeight + m_maxHeight);
+   // m_heightCentre = 0.5 * (m_minHeight + m_maxHeight);
 
     // if not using double precision, setup for bullet a float array
     // the alternative option is to set up a use of the cbtScalar, but dont want bullet headers here
     // as it becomes limiting to the multicore system only
 #ifndef BT_USE_DOUBLE_PRECISION
-    m_heights_f.resize(heights.size());
-    for (size_t i = 0; i < heights.size(); ++i) {
-        m_heights_f[i] = static_cast<float>(heights[i] - m_heightCentre); // centre for bullet shape
+    m_heights_f.resize(heights_absolute.size());
+    for (size_t i = 0; i < heights_absolute.size(); ++i) {
+        m_heights_f[i] = static_cast<float>(heights_absolute[i]);  // no centering for bullet shape - the base position
+                                                                   // is 0,0,0 at the floor of the heightfield
     }
 #endif
 
