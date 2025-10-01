@@ -383,8 +383,6 @@ void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
     const int L = m_heightStickLength;
     m_vertexCache.resize(static_cast<std::size_t>(W) * L);
 
-    const cbtVector3 S = m_localScaling;  // cache once
-
     const cbtScalar dx = m_width / cbtScalar(W - 1);
     const cbtScalar dy = m_length / cbtScalar(L - 1);
     const cbtScalar halfW = m_width * cbtScalar(0.5);
@@ -413,8 +411,8 @@ void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
             }
 
         // **apply scaling exactly once**
-        v *= S; // <<---- we're scaling again here, is that correct?
-            m_vertexCache[static_cast<std::size_t>(y) * W + x] = v;  
+        v *= m_localScaling; // <<---- we're scaling again here, is that correct?
+        m_vertexCache[static_cast<std::size_t>(y) * W + x] = v;  
     }
 }
 
