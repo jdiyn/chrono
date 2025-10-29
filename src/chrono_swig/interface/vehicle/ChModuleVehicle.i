@@ -77,9 +77,7 @@
 
 #include "chrono_vehicle/ChDriver.h"
 #include "chrono_vehicle/ChTerrain.h"
-// moved up the file order to ensure this is included in this group - otherwise a build without irrlicht/vsg fails (i.e. Chrono Unity)
 #include "chrono_vehicle/ChVehicleVisualSystem.h"
-
 
 // Wheeled vehicle
 #include "chrono_vehicle/wheeled_vehicle/ChWheeledVehicle.h"
@@ -422,6 +420,15 @@ Before adding a shared_ptr, mark as shared ptr all its inheritance tree in the m
 %include "chrono_swig/interface/models/VehicleModels.i"
 
 %include "vehicleUtils.i"
+
+#ifdef SWIGCSHARP  // --------------------------------------------------------------------- CSHARP
+// Import ChVisualSystem base class unconditionally (ChVehicleVisualSystem inherits from it)
+// Python gets this via module imports from pychrono.irrlicht or pychrono.vsg3d into appropriate module
+// C# Unity (no visualisation module) needs this unconditionally for SWIG to understand the inheritance
+%import "chrono_swig/interface/core/ChVisualSystem.i"
+#endif             // --------------------------------------------------------------------- CSHARP
+
+%include "../../../chrono_vehicle/ChVehicleVisualSystem.h"
 
 #ifdef CHRONO_IRRLICHT
   #define ChApiIrr 
