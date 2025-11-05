@@ -346,6 +346,7 @@ class cbtConvexHeightfieldAlgorithm : public cbtActivatingCollisionAlgorithm {
 // ================================================================================================
 /// Custom override of the default Bullet algorithm to handle collisions between a sphere shape and a heightfield
 /// terrain.
+/// TODO:- do we need a pure sphere based special case?
 class cbtSphereHeightfieldAlgorithm : public cbtActivatingCollisionAlgorithm {
   public:
     struct CreateFunc : public cbtCollisionAlgorithmCreateFunc {

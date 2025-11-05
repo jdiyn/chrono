@@ -36,7 +36,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
                                                          int upAxis,
                                                          float sphere_radius,
                                                          bool flipQuadEdges)
-    : ChCollisionShape(Type::UNKNOWN_SHAPE, material),
+    : ChCollisionShape(Type::UNKNOWN_SHAPE, material), // shape agnostic here
       m_nx(nx),
       m_ny(ny),
       m_width(dimX),

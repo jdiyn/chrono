@@ -395,6 +395,7 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     // apply margin in one go
     cbtScalar full_margin = GetSuggestedFullMargin();
 
+    // TODO: the note here would imply that the note above is incorrect? safe margin vs margin?
     bt_hf->setMargin(full_margin); // Ensure this is set so that objects DONT sink through the heightfield
 
     // TODO - this is likely not necessary anymore!

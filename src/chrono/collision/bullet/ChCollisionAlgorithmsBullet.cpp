@@ -1777,7 +1777,7 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     terrainWorldUp.normalize();
 
     // ============================================================================
-    // STEP 1: Compute AABB for terrain variation check
+    // Compute AABB for terrain variation check
     // ============================================================================
 
     cbtVector3 aabbMin, aabbMax;
@@ -2174,7 +2174,9 @@ cbtSphereHeightfieldAlgorithm::~cbtSphereHeightfieldAlgorithm() {
 
 // ============================================================================
 // ADAPTIVE SPHERE-HEIGHTFIELD WITH TERRAIN VARIATION CHECK
-// ============================================================================
+// ======================================================
+// 
+// TODO:- this is messy, complicated and is not efficient in usage of data handling and physcis processing.
 
 void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWrapper* wrapperA,
                                                      const cbtCollisionObjectWrapper* wrapperB,
@@ -2671,6 +2673,8 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
 //}
 //
 
+
+// TODO- is this handling the sphere correclty if the sphere comes up against a sharp incline? do we sample about the hemispheres?
 
 cbtScalar cbtSphereHeightfieldAlgorithm::calculateTimeOfImpact(cbtCollisionObject* body0,
                                                                cbtCollisionObject* body1,

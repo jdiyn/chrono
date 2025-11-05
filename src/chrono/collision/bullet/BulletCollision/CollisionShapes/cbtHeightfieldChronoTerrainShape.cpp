@@ -317,6 +317,8 @@ void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights
 }
 
 // accelerator build/clear
+// TODO:- we likley don't need the accelerator anymore. however, its worth considering this where the terrain is partitioned into patches
+//      perhaps at a higher level - i.e. up in the Chrono class. Not rigid terrain, since we want to move this to dynamic terrain handling (i.e. not 'rigid')
 void cbtHeightfieldChronoTerrainShape::buildAccelerator(int chunkSize) {
     if (chunkSize <= 0) {
         clearAccelerator();
@@ -438,7 +440,7 @@ void cbtHeightfieldChronoTerrainShape::processAllTriangles(cbtTriangleCallback* 
                                                            const cbtVector3& aabbMaxWorld) const {
 
     // Convert the world‑space AABB into the *un‑scaled* local grid frame
-    const cbtVector3 invS = getInverseLocalScaling();
+    const cbtVector3 invS = getInverseLocalScaling();   /// TODO:- should this be cached? with handling of cache - updates?
     const cbtVector3 aabbMin = aabbMinWorld * invS;
     const cbtVector3 aabbMax = aabbMaxWorld * invS;
 

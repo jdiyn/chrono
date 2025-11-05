@@ -130,8 +130,8 @@ void cbtHeightfieldTerrainShape::getAabb(const cbtTransform& t, cbtVector3& aabb
 /// This returns the "raw" (user's initial) height, not the actual height.
 /// The actual height needs to be adjusted to be relative to the center
 ///   of the heightfield's AABB.
-cbtScalar
-cbtHeightfieldTerrainShape::getRawHeightFieldValue(int x, int y) const
+/// TODO:- consider whether this is required or not
+cbtScalar cbtHeightfieldTerrainShape::getRawHeightFieldValue(int x, int y) const
 {
 	cbtScalar val = 0.f;
 	switch (m_heightDataType)
@@ -165,7 +165,9 @@ cbtHeightfieldTerrainShape::getRawHeightFieldValue(int x, int y) const
 	return val;
 }
 
-/// this returns the vertex in bullet-local coordinates
+/// returns the vertex in bullet-local coordinates
+/// TODO:- do we need to use switch handling here? will cause unecesasary compute if wanting to retrieve multiple vertices
+///    should it not be in local coord without the m_upaxis?
 void cbtHeightfieldTerrainShape::getVertex(int x, int y, cbtVector3& vertex) const
 {
 	cbtAssert(x >= 0);
@@ -227,9 +229,6 @@ getQuantized(
   This routine is basically determining the gridpoint indices for a given
   input vector, answering the question: "which gridpoint is closest to the
   provided point?".
-
-  "with clamp" means that we restrict the point to be in the heightfield's
-  axis-aligned bounding box.
  */
 void cbtHeightfieldTerrainShape::quantizeWithClamp(int* out, const cbtVector3& point, int /*isMax*/) const
 {
@@ -249,6 +248,9 @@ void cbtHeightfieldTerrainShape::quantizeWithClamp(int* out, const cbtVector3& p
     - convert input aabb to a range of heightfield grid points (quantize)
     - iterate over all triangles in that subset of the grid
  */
+
+/// TODO:- is this still necessary, given that we're moving away from the triangle-based collision?
+///		 perhaps keep for legacy purpose?
 void cbtHeightfieldTerrainShape::processAllTriangles(cbtTriangleCallback* callback, const cbtVector3& aabbMin, const cbtVector3& aabbMax) const
 {
 	// scale down the input aabb's so they are in local (non-scaled) coordinates
@@ -360,6 +362,7 @@ void cbtHeightfieldTerrainShape::processAllTriangles(cbtTriangleCallback* callba
 
 void cbtHeightfieldTerrainShape::calculateLocalInertia(cbtScalar, cbtVector3& inertia) const
 {
+	/// TODO:- I want to consider how this should be ajdusted for *dynamic* terrain!
 	//moving concave objects not supported
 
 	inertia.setValue(cbtScalar(0.), cbtScalar(0.), cbtScalar(0.));
