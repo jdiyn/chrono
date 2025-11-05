@@ -25,6 +25,7 @@ set VSG_INSTALL_DIR="C:/Packages/vsg"
 
 set BUILDSHARED=ON
 set BUILDDEBUG=ON
+set BUILDRELWITHDEBINFO=ON
 
 @if %DOWNLOAD% EQU OFF (
     set VSG_SOURCE_DIR="C:/Sources/VulkanSceneGraph"
@@ -81,7 +82,8 @@ if "%~1" NEQ "" (
     set GLSLANG_SOURCE_DIR="download_vsg/glslang"
 
     cd download_vsg/glslang/
-    python update_glslang_sources.py
+    rem Try Windows Python launcher first, then fall back to python
+    py -3 update_glslang_sources.py || py update_glslang_sources.py || python update_glslang_sources.py
     cd ../..
 
 ) else (
@@ -96,8 +98,8 @@ rmdir /S/Q %VSG_INSTALL_DIR% 2>nul
 
 rmdir /S/Q build_glslang 2>nul
 cmake -B build_glslang -S %GLSLANG_SOURCE_DIR% ^
-      -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
-      -DCMAKE_DEBUG_POSTFIX="_d" 
+    -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
+    -DCMAKE_DEBUG_POSTFIX="_d" 
 
 cmake --build build_glslang --config Release
 cmake --install build_glslang --config Release --prefix %VSG_INSTALL_DIR%
@@ -107,14 +109,20 @@ if %BUILDDEBUG% EQU ON (
 ) else (
     echo "No Debug build of glslang"
 )
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_glslang --config RelWithDebInfo
+    cmake --install build_glslang --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+) else (
+    echo "No RelWithDebInfo build of glslang"
+)
 
 
 rem --- draco --------------------------------------------------------------
 
 rmdir /S/Q build_draco 2>nul
 cmake -B build_draco -S %DRACO_SOURCE_DIR% ^
-      -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
-      -DCMAKE_DEBUG_POSTFIX="_d"
+    -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
+    -DCMAKE_DEBUG_POSTFIX="_d"
 
 cmake --build build_draco --config Release
 cmake --install build_draco --config Release --prefix %VSG_INSTALL_DIR%
@@ -124,17 +132,23 @@ if %BUILDDEBUG% EQU ON (
 ) else (
     echo "No Debug build of draco"
 )
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_draco --config RelWithDebInfo
+    cmake --install build_draco --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+) else (
+    echo "No RelWithDebInfo build of draco"
+)
 
 rem --- assimp -------------------------------------------------------------
 
 rmdir /S/Q build_assimp 2>nul
 cmake -B build_assimp -S %ASSIMP_SOURCE_DIR%  ^
-      -DBUILD_SHARED_LIBS:BOOL=OFF ^
-      -DCMAKE_DEBUG_POSTFIX=_d ^
-      -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
-      -DASSIMP_BUILD_TESTS:BOOL=OFF  ^
-      -DASSIMP_BUILD_ASSIMP_TOOLS:BOOL=OFF ^
-      -DASSIMP_BUILD_ZLIB:BOOL=ON
+    -DBUILD_SHARED_LIBS:BOOL=OFF ^
+    -DCMAKE_DEBUG_POSTFIX=_d ^
+    -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
+    -DASSIMP_BUILD_TESTS:BOOL=OFF  ^
+    -DASSIMP_BUILD_ASSIMP_TOOLS:BOOL=OFF ^
+    -DASSIMP_BUILD_ZLIB:BOOL=ON
 
 cmake --build build_assimp --config Release
 cmake --install build_assimp --config Release --prefix %VSG_INSTALL_DIR%
@@ -144,43 +158,67 @@ if %BUILDDEBUG% EQU ON (
 ) else (
     echo "No Debug build of assimp"
 )
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_assimp --config RelWithDebInfo
+    cmake --install build_assimp --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+) else (
+    echo "No RelWithDebInfo build of assimp"
+)
 
 rem --- vsg ----------------------------------------------------------------
 
 rmdir /S/Q build_vsg 2>nul
 cmake -B build_vsg -S %VSG_SOURCE_DIR%  ^
-      -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
-      -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
-      -DCMAKE_DEBUG_POSTFIX=_d ^
-      -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd  
+    -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
+    -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
+    -DCMAKE_DEBUG_POSTFIX=_d ^
+    -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
+    -DCMAKE_INSTALL_DEBUG_LIBRARIES=ON ^
+    -DCMAKE_INSTALL_DEBUG_LIBRARIES_ONLY=OFF
 
 cmake --build build_vsg --config Release
 cmake --install build_vsg --config Release --prefix %VSG_INSTALL_DIR%
 if %BUILDDEBUG% EQU ON (
     cmake --build build_vsg --config Debug
     cmake --install build_vsg --config Debug --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsg\bin\Debug\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
 ) else (
     echo "No Debug build of vsg"
+)
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_vsg --config RelWithDebInfo
+    cmake --install build_vsg --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsg\bin\RelWithDebInfo\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
+) else (
+    echo "No RelWithDebInfo build of vsg"
 )
 
 rem --- vsgXchange ---------------------------------------------------------
 
 rmdir /S/Q build_vsgXchange 2>nul
 cmake -B build_vsgXchange -S %VSGXCHANGE_SOURCE_DIR%  ^
-      -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
-      -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
-      -DCMAKE_DEBUG_POSTFIX=_d ^
-      -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
-      -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg ^
-      -Dassimp_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/assimp-5.3
+    -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
+    -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
+    -DCMAKE_DEBUG_POSTFIX=_d ^
+    -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
+    -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg ^
+    -Dassimp_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/assimp-5.3
 
 cmake --build build_vsgXchange --config Release
 cmake --install build_vsgXchange --config Release --prefix %VSG_INSTALL_DIR%
 if %BUILDDEBUG% EQU ON (
     cmake --build build_vsgXchange --config Debug
     cmake --install build_vsgXchange --config Debug --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsgXchange\bin\Debug\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
 ) else (
     echo "No Debug build of vsgXchange"
+)
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_vsgXchange --config RelWithDebInfo
+    cmake --install build_vsgXchange --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsgXchange\bin\RelWithDebInfo\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
+) else (
+    echo "No RelWithDebInfo build of vsgXchange"
 )
 
 @rem del /S/Q red_teapot.vsgt
@@ -193,28 +231,36 @@ rem --- vsgImGui -----------------------------------------------------------
 
 rmdir /S/Q build_vsgImGui 2>nul
 cmake -B build_vsgImGui -S %VSGIMGUI_SOURCE_DIR% ^
-      -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
-      -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
-      -DCMAKE_DEBUG_POSTFIX=_d ^
-      -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
-      -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg
+    -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
+    -DBUILD_SHARED_LIBS:BOOL=%BUILDSHARED% ^
+    -DCMAKE_DEBUG_POSTFIX=_d ^
+    -DCMAKE_RELWITHDEBINFO_POSTFIX=_rd ^
+    -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg
 cmake --build build_vsgImGui --config Release
 cmake --install build_vsgImGui --config Release --prefix %VSG_INSTALL_DIR%
 if %BUILDDEBUG% EQU ON (
     cmake --build build_vsgImGui --config Debug
     cmake --install build_vsgImGui --config Debug --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsgImGui\bin\Debug\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
 ) else (
     echo "No Debug build of vsgImGui"
+)
+if %BUILDRELWITHDEBINFO% EQU ON (
+    cmake --build build_vsgImGui --config RelWithDebInfo
+    cmake --install build_vsgImGui --config RelWithDebInfo --prefix %VSG_INSTALL_DIR%
+    copy /Y build_vsgImGui\bin\RelWithDebInfo\*.pdb %VSG_INSTALL_DIR%\bin\ 2>nul
+) else (
+    echo "No RelWithDebInfo build of vsgImGui"
 )
 
 rem --- vsgExamples --------------------------------------------------------
 
 rmdir /S/Q build_vsgExamples 2>nul
 cmake -B build_vsgExamples -S %VSGEXAMPLES_SOURCE_DIR% ^
-      -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
-      -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg ^
-      -DvsgXchange_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsgXchange ^
-      -DvsgImGui_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsgImGui
+    -DCMAKE_PREFIX_PATH=%VSG_INSTALL_DIR% ^
+    -Dvsg_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsg ^
+    -DvsgXchange_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsgXchange ^
+    -DvsgImGui_DIR:PATH=%VSG_INSTALL_DIR%/lib/cmake/vsgImGui
 
 cmake --build build_vsgExamples --config Release
 cmake --install build_vsgExamples --config Release --prefix %VSG_INSTALL_DIR%
@@ -222,4 +268,28 @@ cmake --install build_vsgExamples --config Release --prefix %VSG_INSTALL_DIR%
 rem --- VSG_FILE_PATH ------------------------------------------------------
 
 set "VSG_INSTALL_DIR=%VSG_INSTALL_DIR:/=\%"
+
 setx VSG_FILE_PATH "%VSG_INSTALL_DIR%\share\vsgExamples"
+
+rem --- BUILD SUMMARY ------------------------------------------------------
+
+echo.
+echo ========================================================================
+echo BUILD SUMMARY
+echo ========================================================================
+echo Install Directory: %VSG_INSTALL_DIR%
+echo.
+echo Configurations Built:
+echo   - Release:         YES
+if %BUILDDEBUG% EQU ON (
+    echo   - Debug:           YES
+) else (
+    echo   - Debug:           NO
+)
+if %BUILDRELWITHDEBINFO% EQU ON (
+    echo   - RelWithDebInfo:  YES
+) else (
+    echo   - RelWithDebInfo:  NO
+)
+echo.
+echo ========================================================================
