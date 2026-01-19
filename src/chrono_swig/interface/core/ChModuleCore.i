@@ -125,6 +125,7 @@ inline const char* ChUtils_GetFilename() {
 
 %include "std_string.i"
 %include "std_vector.i"
+%include "stdint.i" // to have uint8_t for the Update(double time, UpdateFlags flags) changes (altered from bool)
 %include "typemaps.i"
 %include "cpointer.i"
 
