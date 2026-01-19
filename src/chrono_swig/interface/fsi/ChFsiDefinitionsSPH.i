@@ -10,6 +10,14 @@ using namespace chrono::fsi::sph;
 
 %}
 
+#ifdef SWIGCSHARP
+// Prevent emitting a managed type literally named 'Enum' from namespaced enums
+// causes a conflict in Unity with System.Enum (possibly other .NET environments as well)
+%rename(PeriodicSide_Enum) chrono::fsi::sph::PeriodicSide::Enum;
+%rename(BoxSide_Enum) chrono::fsi::sph::BoxSide::Enum;
+%rename(CylSide_Enum) chrono::fsi::sph::CylSide::Enum;
+#endif
+
 %rename(PeriodicSide_NONE) chrono::fsi::sph::PeriodicSide::NONE;
 %rename(PeriodicSide_X) chrono::fsi::sph::PeriodicSide::X;
 %rename(PeriodicSide_Y) chrono::fsi::sph::PeriodicSide::Y;

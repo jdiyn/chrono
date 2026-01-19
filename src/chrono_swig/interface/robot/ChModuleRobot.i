@@ -151,6 +151,7 @@ using namespace chrono::industrial;
 #ifdef SWIGCSHARP  // --------------------------------------------------------------------- CSHARP
 %rename(CollisionFamily_Enum) chrono::robosimian::CollisionFamily::Enum;
 %rename(CollisionFlags_Enum) chrono::robosimian::CollisionFlags::Enum;
+%rename(TurtlebotCollisionFamily_Enum) chrono::turtlebot::CollisionFamily::Enum;
 #endif             // --------------------------------------------------------------------- CSHARP
 
 //
