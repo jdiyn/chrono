@@ -128,6 +128,7 @@ inline const char* ChUtils_GetFilename() {
 %include "stdint.i" // to have uint8_t for the Update(double time, UpdateFlags flags) changes (altered from bool)
 %include "typemaps.i"
 %include "cpointer.i"
+%apply unsigned char { uint8_t };
 
 // This is to enable references to double,int,etc. types in function parameters
 %pointer_class(int,int_ptr);
@@ -353,8 +354,12 @@ inline const char* ChUtils_GetFilename() {
 // functions/   classes
 %include "ChFunction.i"
 
-%include "../../../chrono/fea/ChMesh.h"
+#ifdef SWIGCSHARP   // --------------------------------------------------------------------- CSHARP
+// UpdateFlags must be shown to swig before headers (like ChMesh.h) which use it
+%include "ChUpdateFlags.i"
+#endif              // --------------------------------------------------------------------- CSHARP
 
+%include "../../../chrono/fea/ChMesh.h"
 
 // assets
 %include "ChColor.i"
