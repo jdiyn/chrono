@@ -27,6 +27,7 @@ print("Copyright (c) 2017 projectchrono.org")
 
 # Create a Chrono physical sys
 sys = chrono.ChSystemNSC()
+sys.SetGravityY()
 
 # Contact material shared among all bodies
 mat = chrono.ChContactMaterialNSC()
@@ -180,7 +181,7 @@ vis.AttachSystem(sys)
 vis.SetWindowSize(1024,768)
 vis.SetWindowTitle('Gears annd pulleys')
 vis.Initialize()
-vis.AddLogo(chrono.GetChronoDataFile('logo_pychrono_alpha.png'))
+vis.AddLogo(chrono.GetChronoDataFile('logo_chrono_alpha.png'))
 vis.AddSkyBox()
 vis.AddCamera(chrono.ChVector3d(12, 15, -20))
 vis.AddTypicalLights()

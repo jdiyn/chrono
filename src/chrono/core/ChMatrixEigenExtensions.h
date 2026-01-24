@@ -42,6 +42,13 @@ Scalar wrmsNorm(
     return numext::sqrt(derived().cwiseProduct(weights).cwiseAbs2().sum() / derived().size());
 }
 
+/// Calculate the RMS (residual mean square) norm of a vector.
+Scalar rmsNorm() const {
+    if (derived().size() == 0)
+        return 0;
+    return numext::sqrt(derived().cwiseAbs2().sum() / derived().size());
+}
+
 /// Add a scalar to all elements.
 const CwiseBinaryOp<internal::scalar_sum_op<Scalar>, const Derived, const ConstantReturnType> operator+(
     const Scalar& val) const {
@@ -64,8 +71,8 @@ void ArchiveOut(chrono::ChArchiveOut& archive_out) {
 
     // stream out all member data
 
-    if (chrono::ChOutputASCII* mascii = dynamic_cast<chrono::ChOutputASCII*>(&archive_out)) {
-        // CUSTOM row x col 'intuitive' table-like log when using ChOutputASCII:
+    if (chrono::ChArchiveOutASCII* mascii = dynamic_cast<chrono::ChArchiveOutASCII*>(&archive_out)) {
+        // CUSTOM row x col 'intuitive' table-like log when using ChArchiveOutASCII:
         mascii->indent();
         mascii->GetStream().operator<<((int)derived().rows());
         mascii->GetStream().operator<<(" rows,  ");

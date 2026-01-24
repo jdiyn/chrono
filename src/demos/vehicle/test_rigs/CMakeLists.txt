@@ -16,11 +16,11 @@ set(DEMOS
     demo_VEH_TrackTestRig
 )
 
-if(CH_ENABLE_MODULE_FSI)
+if(CH_ENABLE_MODULE_FSI_SPH AND CH_ENABLE_MODULE_VSG)
     set(DEMOS ${DEMOS} demo_VEH_TireTestRig_CRM)
 endif()
 
-if(CH_ENABLE_MODULE_IRRLICHT AND CH_ENABLE_MODULE_PARDISO_MKL OR CH_ENABLE_MODULE_MUMPS)
+if (CH_ENABLE_MODULE_PARDISO_MKL OR CH_ENABLE_MODULE_MUMPS)
     set(DEMOS ${DEMOS} demo_VEH_TrackTestRig_Band)
 endif()
 
@@ -34,7 +34,7 @@ set(UTILS "../../SetChronoSolver.h")
 list(APPEND LIBS "Chrono_vehicle")
 list(APPEND LIBS "ChronoModels_vehicle")
 
-if(CH_ENABLE_MODULE_FSI)
+if(CH_ENABLE_MODULE_FSI_SPH)
     list(APPEND LIBS "Chrono_fsisph")
 endif()
 
@@ -56,7 +56,7 @@ endif()
 
 if(CH_ENABLE_MODULE_VSG)
     list(APPEND LIBS "Chrono_vehicle_vsg")
-    if(CH_ENABLE_MODULE_FSI)
+    if(CH_ENABLE_MODULE_FSI_SPH)
       list(APPEND LIBS "Chrono_fsisph_vsg")
     endif()
 endif()
@@ -79,5 +79,5 @@ foreach(PROGRAM ${DEMOS})
     set_property(TARGET ${PROGRAM} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${PROGRAM}>")
     target_link_libraries(${PROGRAM} ${LIBS})
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

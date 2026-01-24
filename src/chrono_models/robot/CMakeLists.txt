@@ -49,7 +49,6 @@ set(CRM_CURIOSITY_FILES
 
 source_group("curiosity" FILES ${CRM_CURIOSITY_FILES})
 
-
 #-----------------------------------------------------------------------------
 
 set(CRM_COPTERS_FILES
@@ -89,6 +88,9 @@ add_library(ChronoModels_robot
             ${CRM_INDUSTRIAL_FILES}
             )
 add_library(Chrono::models_robot ALIAS ChronoModels_robot)
+
+set_target_properties(ChronoModels_robot PROPERTIES DEBUG_POSTFIX ${CH_DEBUG_POSTFIX})
+
 
 if(CH_WHOLE_PROG_OPT)
   set_target_properties(ChronoModels_robot PROPERTIES COMPILE_FLAGS "/GL")

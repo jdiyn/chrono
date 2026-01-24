@@ -5,6 +5,7 @@ set(DEMOS
     demo_VSG_assets
     demo_VSG_paths
     demo_VSG_shapes
+    demo_VSG_wave
     demo_VSG_helmet
     demo_VSG_vehicles
     demo_VSG_visualize_FEA
@@ -43,5 +44,5 @@ foreach(PROGRAM ${DEMOS})
     set_property(TARGET ${PROGRAM} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${PROGRAM}>")
     target_link_libraries(${PROGRAM} ${LIBS})
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

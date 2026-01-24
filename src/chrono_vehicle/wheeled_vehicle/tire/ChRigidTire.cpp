@@ -18,7 +18,7 @@
 
 #include <algorithm>
 
-#include "chrono/core/ChGlobal.h"
+#include "chrono/core/ChDataPath.h"
 #include "chrono/physics/ChSystem.h"
 #include "chrono/physics/ChContactContainer.h"
 
@@ -35,7 +35,7 @@ ChRigidTire::ChRigidTire(const std::string& name) : ChTire(name), m_use_contact_
 ChRigidTire::~ChRigidTire() {}
 
 // -----------------------------------------------------------------------------
-void ChRigidTire::SetMeshFilename(const std::string& mesh_file, double sweep_sphere_radius) {
+void ChRigidTire::SetContactMesh(const std::string& mesh_file, double sweep_sphere_radius) {
     m_use_contact_mesh = true;
     m_contact_meshFile = mesh_file;
     m_sweep_sphere_radius = sweep_sphere_radius;
@@ -163,12 +163,13 @@ class RigidTireContactReporter : public ChContactContainer::ReportContactCallbac
     virtual bool OnReportContact(const ChVector3d& pA,
                                  const ChVector3d& pB,
                                  const ChMatrix33<>& plane_coord,
-                                 const double& distance,
-                                 const double& eff_radius,
+                                 double distance,
+                                 double eff_radius,
                                  const ChVector3d& rforce,
                                  const ChVector3d& rtorque,
                                  ChContactable* modA,
-                                 ChContactable* modB) override {
+                                 ChContactable* modB,
+                                 int constraint_offset) override {
         // Filter contacts that involve the tire body.
         if (modA == m_body.get() || modB == m_body.get()) {
             // Express current contact force and torque in global frame

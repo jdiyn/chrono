@@ -273,7 +273,7 @@ void CreateCantilever(ChSystem& sys,
         sys.SetGravitationalAcceleration(ChVector3d(0, 0, 0));
 
     sys.Setup();
-    sys.Update(true);
+    sys.Update(UpdateFlags::UPDATE_ALL);
 
     // modal_assembly->WriteSubassemblyMatrices(true, true, true, true, out_dir + "/dump");
 
@@ -385,7 +385,6 @@ int main(int argc, char* argv[]) {
     vis.AddLogo();
     vis.AddSkyBox();
     vis.AddCamera(ChVector3d(1, 1.3, 6), ChVector3d(3, 0, 0));
-    vis.AddLightWithShadow(ChVector3d(20, 20, 20), ChVector3d(0, 0, 0), 50, 5, 50, 55);
     vis.AddTypicalLights();
 
     // This is for GUI tweaking of system parameters..
@@ -412,7 +411,7 @@ int main(int argc, char* argv[]) {
         hht_stepper->SetVerbose(false);
         hht_stepper->SetStepControl(false);
         hht_stepper->SetAlpha(-0.2);
-        hht_stepper->SetModifiedNewton(true);
+        hht_stepper->SetJacobianUpdateMethod(ChTimestepperImplicit::JacobianUpdate::EVERY_STEP);
     }
 
     UPDATE_EXAMPLE = true;

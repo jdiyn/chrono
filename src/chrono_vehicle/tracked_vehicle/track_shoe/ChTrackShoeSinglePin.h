@@ -80,9 +80,7 @@ class CH_VEHICLE_API ChTrackShoeSinglePin : public ChTrackShoeSegmented {
     /// Return the radius of the contact cylinders.
     virtual double GetCylinderRadius() const = 0;
 
-    virtual void ExportComponentList(rapidjson::Document& jsonDocument) const override;
-
-    virtual void Output(ChVehicleOutput& database) const override;
+    virtual void PopulateComponentList() override;
 
   private:
     /// Connect this track shoe to the specified neighbor.
@@ -95,7 +93,7 @@ class CH_VEHICLE_API ChTrackShoeSinglePin : public ChTrackShoeSegmented {
 
     virtual void EnableTrackBendingStiffness(bool val) override;
 
-    std::shared_ptr<ChVehicleJoint> m_joint;  ///< connection to neighboring track shoe
+    std::shared_ptr<ChJoint> m_joint;  ///< connection to neighboring track shoe
     std::shared_ptr<ChLinkRSDA> m_rsda;       ///< optional RSDA on connection
 
     friend class ChSprocketSinglePin;

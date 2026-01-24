@@ -12,7 +12,7 @@
 
 #include "chrono/physics/ChSystem.h"
 #include "chrono/utils/ChProfiler.h"
-#include "chrono/serialization/ChOutputASCII.h"
+#include "chrono/serialization/ChArchiveASCII.h"
 #include "chrono/serialization/ChArchiveJSON.h"
 #include "chrono/serialization/ChObjectExplorer.h"
 
@@ -68,7 +68,7 @@ bool ChIrrEventReceiver::OnEvent(const irr::SEvent& event) {
 
                 std::cout << "Saving system in ASCII format to dump.txt file \n";
                 std::ofstream mfileo2("dump.txt");
-                ChOutputASCII archive_out2(mfileo2);
+                ChArchiveOutASCII archive_out2(mfileo2);
                 archive_out2.SetUseVersions(false);
                 archive_out2 << CHNVP(m_gui->m_system, "System");
 
@@ -170,11 +170,14 @@ ChIrrGUI::ChIrrGUI()
 
 ChIrrGUI::~ChIrrGUI() {
     delete m_receiver;
+
+    m_device->drop();
 }
 
 void ChIrrGUI::Initialize(ChVisualSystemIrrlicht* vis) {
     m_vis = vis;
     m_device = vis->GetDevice();
+    m_device->grab();
     m_system = &vis->GetSystem(0);
     initialized = true;
 
@@ -317,7 +320,7 @@ void ChIrrGUI::SetSymbolScale(double val) {
 void ChIrrGUI::WriteSystemMatrices() {
     // For safety
     m_system->Setup();
-    m_system->Update(m_system->GetChTime(), false);
+    m_system->Update(m_system->GetChTime(), UpdateFlags::UPDATE_ALL);
 
     try {
         // Save M mass matrix, K stiffness matrix, R damping matrix, Cq jacobians:

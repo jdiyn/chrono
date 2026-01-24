@@ -19,10 +19,12 @@
 
 #include "chrono/physics/ChBodyEasy.h"
 #include "chrono/physics/ChSystemSMC.h"
+
 #include "chrono/fea/ChElementShellANCF_3833.h"
 #include "chrono/fea/ChLinkNodeSlopeFrame.h"
 #include "chrono/fea/ChLinkNodeFrame.h"
 #include "chrono/fea/ChMesh.h"
+
 #include "chrono/solver/ChDirectSolverLS.h"
 
 #include "FEAvisualization.h"
@@ -266,7 +268,7 @@ int main(int argc, char* argv[]) {
 
     // Create the run-time visualization system
     auto vis = CreateVisualizationSystem(vis_type, CameraVerticalDir::Z, sys, "ANCF Shells 3833",
-                                         ChVector3d(0.5, -0.5, 0.5), ChVector3d(0.5, 0.25, 0.0));
+                                         ChVector3d(1.0, -1.0, 1.0), ChVector3d(0.5, 0.25, 0.0));
 
     // ----------------------------------
     // Perform a dynamic time integration
@@ -286,7 +288,7 @@ int main(int argc, char* argv[]) {
     mystepper->SetMaxIters(50);
     mystepper->SetAbsTolerances(1e-4, 1e2);
     mystepper->SetStepControl(false);
-    mystepper->SetModifiedNewton(true);
+    mystepper->SetJacobianUpdateMethod(ChTimestepperImplicit::JacobianUpdate::EVERY_STEP);
 
     while (vis->Run()) {
         std::cout << "Time: " << sys.GetChTime() << "s. \n";

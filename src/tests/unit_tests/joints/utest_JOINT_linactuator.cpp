@@ -21,17 +21,18 @@
 
 #include "chrono/physics/ChSystemNSC.h"
 #include "chrono/physics/ChBody.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
-#include "chrono/utils/ChUtilsValidation.h"
+#include "chrono/input_output/ChWriterCSV.h"
+#include "chrono/utils/ChValidation.h"
 
 #include "chrono_thirdparty/filesystem/path.h"
 
 using namespace chrono;
+using namespace chrono::utils;
 
 // =============================================================================
 // Local variables
 //
-static const std::string val_dir = "../RESULTS/";
+static const std::string val_dir = "TEST_RESULTS/";
 static const std::string out_dir = val_dir + "lin_actuator/";
 static const std::string ref_dir = "testing/joints/lin_actuator/";
 
@@ -45,7 +46,7 @@ bool TestLinActuator(const ChQuaternion<>& rot,
                      const std::string& testName);
 bool ValidateReference(const std::string& testName, const std::string& what, double tolerance);
 bool ValidateConstraints(const std::string& testName, const std::string& what, double tolerance);
-utils::ChWriterCSV OutStream();
+ChWriterCSV OutStream();
 
 // =============================================================================
 //
@@ -194,23 +195,23 @@ bool TestLinActuator(const ChQuaternion<>& rot,    // translation along Z axis
     // ------------------------------------------------
 
     // Create the CSV_Writer output objects (TAB delimited)
-    utils::ChWriterCSV out_pos = OutStream();
-    utils::ChWriterCSV out_vel = OutStream();
-    utils::ChWriterCSV out_acc = OutStream();
+    ChWriterCSV out_pos = OutStream();
+    ChWriterCSV out_vel = OutStream();
+    ChWriterCSV out_acc = OutStream();
 
-    utils::ChWriterCSV out_quat = OutStream();
-    utils::ChWriterCSV out_avel = OutStream();
-    utils::ChWriterCSV out_aacc = OutStream();
+    ChWriterCSV out_quat = OutStream();
+    ChWriterCSV out_avel = OutStream();
+    ChWriterCSV out_aacc = OutStream();
 
-    utils::ChWriterCSV out_rfrcP = OutStream();
-    utils::ChWriterCSV out_rtrqP = OutStream();
+    ChWriterCSV out_rfrcP = OutStream();
+    ChWriterCSV out_rtrqP = OutStream();
 
-    utils::ChWriterCSV out_rfrcA = OutStream();
-    utils::ChWriterCSV out_rtrqA = OutStream();
+    ChWriterCSV out_rfrcA = OutStream();
+    ChWriterCSV out_rtrqA = OutStream();
 
-    utils::ChWriterCSV out_cnstrP = OutStream();
+    ChWriterCSV out_cnstrP = OutStream();
 
-    utils::ChWriterCSV out_cnstrA = OutStream();
+    ChWriterCSV out_cnstrA = OutStream();
 
     // Write headers
     out_pos << "Time"
@@ -341,23 +342,23 @@ bool TestLinActuator(const ChQuaternion<>& rot,    // translation along Z axis
     }
 
     // Write output files
-    out_pos.WriteToFile(out_dir + testName + "_CHRONO_Pos.txt", testName + "\n");
-    out_vel.WriteToFile(out_dir + testName + "_CHRONO_Vel.txt", testName + "\n");
-    out_acc.WriteToFile(out_dir + testName + "_CHRONO_Acc.txt", testName + "\n");
+    out_pos.WriteToFile(out_dir + testName + "_CHRONO_Pos.txt", "# " + testName);
+    out_vel.WriteToFile(out_dir + testName + "_CHRONO_Vel.txt", "# " + testName);
+    out_acc.WriteToFile(out_dir + testName + "_CHRONO_Acc.txt", "# " + testName);
 
-    out_quat.WriteToFile(out_dir + testName + "_CHRONO_Quat.txt", testName + "\n");
-    out_avel.WriteToFile(out_dir + testName + "_CHRONO_Avel.txt", testName + "\n");
-    out_aacc.WriteToFile(out_dir + testName + "_CHRONO_Aacc.txt", testName + "\n");
+    out_quat.WriteToFile(out_dir + testName + "_CHRONO_Quat.txt", "# " + testName);
+    out_avel.WriteToFile(out_dir + testName + "_CHRONO_Avel.txt", "# " + testName);
+    out_aacc.WriteToFile(out_dir + testName + "_CHRONO_Aacc.txt", "# " + testName);
 
-    out_rfrcP.WriteToFile(out_dir + testName + "_CHRONO_RforceP.txt", testName + "\n");
-    out_rtrqP.WriteToFile(out_dir + testName + "_CHRONO_RtorqueP.txt", testName + "\n");
+    out_rfrcP.WriteToFile(out_dir + testName + "_CHRONO_RforceP.txt", "# " + testName);
+    out_rtrqP.WriteToFile(out_dir + testName + "_CHRONO_RtorqueP.txt", "# " + testName);
 
-    out_rfrcA.WriteToFile(out_dir + testName + "_CHRONO_RforceA.txt", testName + "\n");
-    out_rtrqA.WriteToFile(out_dir + testName + "_CHRONO_RtorqueA.txt", testName + "\n");
+    out_rfrcA.WriteToFile(out_dir + testName + "_CHRONO_RforceA.txt", "# " + testName);
+    out_rtrqA.WriteToFile(out_dir + testName + "_CHRONO_RtorqueA.txt", "# " + testName);
 
-    out_cnstrP.WriteToFile(out_dir + testName + "_CHRONO_ConstraintsP.txt", testName + "\n");
+    out_cnstrP.WriteToFile(out_dir + testName + "_CHRONO_ConstraintsP.txt", "# " + testName);
 
-    out_cnstrA.WriteToFile(out_dir + testName + "_CHRONO_ConstraintsA.txt", testName + "\n");
+    out_cnstrA.WriteToFile(out_dir + testName + "_CHRONO_ConstraintsA.txt", "# " + testName);
 
     return true;
 }
@@ -373,11 +374,11 @@ bool ValidateReference(const std::string& testName,  // name of this test
 {
     std::string sim_file = out_dir + testName + "_CHRONO_" + what + ".txt";
     std::string ref_file = ref_dir + testName + "_ADAMS_" + what + ".txt";
-    utils::DataVector norms;
+    ChValidation::DataVector norms;
 
-    bool check = utils::Validate(sim_file, utils::GetValidationDataFile(ref_file), utils::RMS_NORM, tolerance, norms);
+    bool check = ChValidation::Test(sim_file, utils::GetValidationDataFile(ref_file), ChValidation::NormType::RMS, tolerance, norms);
     std::cout << "   validate " << what << (check ? ": Passed" : ": Failed") << "  [  ";
-    for (size_t col = 0; col < norms.size(); col++)
+    for (Eigen::Index col = 0; col < norms.size(); col++)
         std::cout << norms[col] << "  ";
     std::cout << "  ]" << std::endl;
 
@@ -391,11 +392,11 @@ bool ValidateConstraints(const std::string& testName,  // name of this test
                          double tolerance)             // validation tolerance
 {
     std::string sim_file = out_dir + testName + "_CHRONO_" + what + ".txt";
-    utils::DataVector norms;
+    ChValidation::DataVector norms;
 
-    bool check = utils::Validate(sim_file, utils::RMS_NORM, tolerance, norms);
+    bool check = ChValidation::Test(sim_file, ChValidation::NormType::RMS, tolerance, norms);
     std::cout << "   validate Constraints" << (check ? ": Passed" : ": Failed") << "  [  ";
-    for (size_t col = 0; col < norms.size(); col++)
+    for (Eigen::Index col = 0; col < norms.size(); col++)
         std::cout << norms[col] << "  ";
     std::cout << "  ]" << std::endl;
 
@@ -406,8 +407,8 @@ bool ValidateConstraints(const std::string& testName,  // name of this test
 //
 // Utility function to create a CSV output stream and set output format options.
 //
-utils::ChWriterCSV OutStream() {
-    utils::ChWriterCSV out("\t");
+ChWriterCSV OutStream() {
+    ChWriterCSV out("\t");
 
     out.Stream().setf(std::ios::scientific | std::ios::showpos);
     out.Stream().precision(6);

@@ -24,10 +24,10 @@
 #include <array>
 
 #include "chrono/core/ChTimer.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
+#include "chrono/input_output/ChWriterCSV.h"
 
 #include "chrono_vehicle/ChConfigVehicleFMI.h"
-#include "chrono_vehicle/ChVehicleModelData.h"
+#include "chrono_vehicle/ChVehicleDataPath.h"
 #include "chrono_vehicle/ChSubsysDefs.h"
 #include "chrono_vehicle/terrain/RigidTerrain.h"
 #include "chrono_vehicle/terrain/FlatTerrain.h"
@@ -47,7 +47,7 @@ using namespace chrono::fmi2;
 // =============================================================================
 
 // Simulation step sizes
-double step_size = 2e-3;
+double step = 2e-3;
 
 // Simulation end time
 double t_end = 15;
@@ -101,7 +101,7 @@ void CreateVehicleFMU(FmuChronoUnit& vehicle_fmu,
 
     // Set fixed parameters - use vehicle JSON files from the Chrono::Vehicle data directory
     std::string data_path = "../data/vehicle/";
-    std::string vehicle_JSON = vehicle::GetDataFile("hmmwv/vehicle/HMMWV_Vehicle.json");
+    std::string vehicle_JSON = GetVehicleDataFile("hmmwv/vehicle/HMMWV_Vehicle.json");
 
     vehicle_fmu.SetVariable("data_path", data_path);
     vehicle_fmu.SetVariable("vehicle_JSON", vehicle_JSON);
@@ -145,10 +145,10 @@ void CreatePowertrainFMU(FmuChronoUnit& powertrain_fmu,
     powertrain_fmu.SetVariable("out_path", out_path);
 
     // Set fixed parameters
-    ////std::string engine_JSON = vehicle::GetDataFile("hmmwv/powertrain/HMMWV_EngineShafts.json");
-    ////std::string transmission_JSON = vehicle::GetDataFile("hmmwv/powertrain/HMMWV_AutomaticTransmissionShafts.json");
-    std::string engine_JSON = vehicle::GetDataFile("hmmwv/powertrain/HMMWV_EngineSimpleMap.json");
-    std::string transmission_JSON = vehicle::GetDataFile("hmmwv/powertrain/HMMWV_AutomaticTransmissionSimpleMap.json");
+    ////std::string engine_JSON = GetVehicleDataFile("hmmwv/powertrain/HMMWV_EngineShafts.json");
+    ////std::string transmission_JSON = GetVehicleDataFile("hmmwv/powertrain/HMMWV_AutomaticTransmissionShafts.json");
+    std::string engine_JSON = GetVehicleDataFile("hmmwv/powertrain/HMMWV_EngineSimpleMap.json");
+    std::string transmission_JSON = GetVehicleDataFile("hmmwv/powertrain/HMMWV_AutomaticTransmissionSimpleMap.json");
 
     powertrain_fmu.SetVariable("engine_JSON", engine_JSON);
     powertrain_fmu.SetVariable("transmission_JSON", transmission_JSON);
@@ -194,8 +194,8 @@ void CreateDriverFMU(FmuChronoUnit& driver_fmu,
     driver_fmu.SetVariable("out_path", out_path);
 
     // Set fixed parameters
-    std::string path_file = vehicle::GetDataFile("paths/ISO_double_lane_change.txt");
-    ////std::string path_file = vehicle::GetDataFile("paths/ISO_double_lane_change2.txt");
+    std::string path_file = GetVehicleDataFile("paths/ISO_double_lane_change.txt");
+    ////std::string path_file = GetVehicleDataFile("paths/ISO_double_lane_change2.txt");
     double throttle_threshold = 0.2;
     double look_ahead_dist = 5.0;
 
@@ -242,7 +242,7 @@ void CreateTireFMU(FmuChronoUnit& tire_fmu,
     tire_fmu.SetVariable("out_path", out_path);
 
     // Set fixed parameters
-    std::string tire_JSON = vehicle::GetDataFile("hmmwv/tire/HMMWV_TMeasyTire.json");
+    std::string tire_JSON = GetVehicleDataFile("hmmwv/tire/HMMWV_TMeasyTire.json");
 
     tire_fmu.SetVariable("tire_JSON", tire_JSON);
 }
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
     try {
         CreateVehicleFMU(vehicle_fmu,                                                      //
                          vehicle_instance_name, vehicle_fmu_filename, vehicle_unpack_dir,  //
-                         step_size, start_time, stop_time,                                 //
+                         step, start_time, stop_time,                                      //
                          logCategories, vehicle_out_dir, render, render_fps);              //
     } catch (std::exception& e) {
         std::cout << "ERROR loading vehicle FMU: " << e.what() << "\n";
@@ -356,7 +356,7 @@ int main(int argc, char* argv[]) {
     try {
         CreatePowertrainFMU(powertrain_fmu,                                                            //
                             powertrain_instance_name, powertrain_fmu_filename, powertrain_unpack_dir,  //
-                            step_size, start_time, stop_time,                                          //
+                            step, start_time, stop_time,                                               //
                             logCategories, driver_out_dir);                                            //
     } catch (std::exception& e) {
         std::cout << "ERROR loading powertrain FMU: " << e.what() << "\n";
@@ -365,7 +365,7 @@ int main(int argc, char* argv[]) {
     try {
         CreateDriverFMU(driver_fmu,                                                    //
                         driver_instance_name, driver_fmu_filename, driver_unpack_dir,  //
-                        step_size, start_time, stop_time,                              //
+                        step, start_time, stop_time,                                   //
                         logCategories, driver_out_dir, render, render_fps);            //
     } catch (std::exception& e) {
         std::cout << "ERROR loading driver FMU: " << e.what() << "\n";
@@ -375,7 +375,7 @@ int main(int argc, char* argv[]) {
         try {
             CreateTireFMU(tire_fmu[i],                                                                       //
                           tire_instance_name + "_" + std::to_string(i), tire_fmu_filename, tire_unpack_dir,  //
-                          step_size, start_time, stop_time,                                                  //
+                          step, start_time, stop_time,                                                       //
                           logCategories, tire_out_dir + "_" + std::to_string(i));                            //
         } catch (std::exception& e) {
             std::cout << "ERROR loading tire FMU: " << e.what() << "\n";
@@ -411,7 +411,7 @@ int main(int argc, char* argv[]) {
     FlatTerrain terrain(0.0, 0.8f);
 
     // Initialize output
-    utils::ChWriterCSV csv;
+    ChWriterCSV csv;
     csv.SetDelimiter(" ");
 
     // Enable/disable saving snapshots
@@ -499,18 +499,18 @@ int main(int argc, char* argv[]) {
         }
 
         // ----------- Advance FMUs
-        auto status_vehicle = vehicle_fmu.DoStep(time, step_size, fmi2True);
-        auto status_powertrain = powertrain_fmu.DoStep(time, step_size, fmi2True);
-        auto status_driver = driver_fmu.DoStep(time, step_size, fmi2True);
+        auto status_vehicle = vehicle_fmu.DoStep(time, step, fmi2True);
+        auto status_powertrain = powertrain_fmu.DoStep(time, step, fmi2True);
+        auto status_driver = driver_fmu.DoStep(time, step, fmi2True);
         if (status_vehicle == fmi2Discard || status_powertrain == fmi2Discard || status_driver == fmi2Discard)
             break;
         for (int i = 0; i < 4; i++) {
-            auto status_tire = tire_fmu[i].DoStep(time, step_size, fmi2True);
+            auto status_tire = tire_fmu[i].DoStep(time, step, fmi2True);
             if (status_tire == fmi2Discard)
                 break;
         }
 
-        time += step_size;
+        time += step;
     }
 
     timer.stop();

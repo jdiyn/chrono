@@ -1,13 +1,13 @@
 
 set(DEMOS "")
 
-list(APPEND DEMOS demo_ROS_custom_handler)
+list(APPEND DEMOS demo_ROS_ipc_test)
 
 if (CH_ROS_HAS_INTERFACES)
   list(APPEND DEMOS demo_ROS_viper)
 endif()
 
-if (CH_ENABLE_MODULEPARSERS AND HAVE_URDF)
+if (CH_ENABLE_MODULE_PARSERS AND CH_USE_URDF)
   list(APPEND DEMOS demo_ROS_urdf)
 endif()
 
@@ -19,7 +19,9 @@ if(CH_ENABLE_MODULE_VEHICLE AND CH_ENABLE_MODULE_VEHICLE_MODELS)
 endif()
 
 if(CH_ENABLE_MODULE_SENSOR)
-  list(APPEND DEMOS demo_ROS_sensor)
+  if(CH_USE_SENSOR_OPTIX)
+    list(APPEND DEMOS demo_ROS_sensor)
+  endif()
 endif()
 
 # ------------------------------------------------------------------------------
@@ -74,5 +76,5 @@ foreach(PROGRAM ${DEMOS})
 
     target_link_libraries(${PROGRAM} ${LIBS})
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

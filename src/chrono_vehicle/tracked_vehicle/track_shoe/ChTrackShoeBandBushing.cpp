@@ -20,7 +20,7 @@
 #include "chrono/assets/ChVisualShapeBox.h"
 #include "chrono/assets/ChVisualShapeCylinder.h"
 #include "chrono/assets/ChTexture.h"
-#include "chrono/core/ChGlobal.h"
+#include "chrono/core/ChDataPath.h"
 
 #include "chrono_vehicle/ChSubsysDefs.h"
 #include "chrono_vehicle/tracked_vehicle/track_shoe/ChTrackShoeBandBushing.h"
@@ -98,7 +98,7 @@ void ChTrackShoeBandBushing::UpdateInertiaProperties() {
     m_xform = m_shoe->GetFrameRefToAbs();
 
     // Calculate COM and inertia expressed in global frame
-    utils::CompositeInertia composite;
+    CompositeInertia composite;
     composite.AddComponent(m_shoe->GetFrameCOMToAbs(), m_shoe->GetMass(), m_shoe->GetInertia());
     for (unsigned int is = 0; is < GetNumWebSegments(); is++) {
         composite.AddComponent(m_web_segments[is]->GetFrameCOMToAbs(), m_web_segments[is]->GetMass(),
@@ -165,8 +165,8 @@ void ChTrackShoeBandBushing::Connect(std::shared_ptr<ChTrackShoe> next,
     {
         ChVector3d loc = m_shoe->TransformPointLocalToParent(ChVector3d(GetToothBaseLength() / 2, 0, 0));
         ChQuaternion<> rot = m_shoe->GetRot() * z2y;
-        auto bushing = chrono_types::make_shared<ChVehicleJoint>(
-            ChVehicleJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), m_web_segments[0], m_shoe,
+        auto bushing = chrono_types::make_shared<ChJoint>(
+            ChJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), m_web_segments[0], m_shoe,
             ChFrame<>(loc, rot), GetBushingData());
         bushing->SetTag(m_obj_tag);
         chassis->AddJoint(bushing);
@@ -177,8 +177,8 @@ void ChTrackShoeBandBushing::Connect(std::shared_ptr<ChTrackShoe> next,
     for (size_t is = 0; is < GetNumWebSegments() - 1; is++) {
         ChVector3d loc = m_web_segments[is]->TransformPointLocalToParent(ChVector3d(m_seg_length / 2, 0, 0));
         ChQuaternion<> rot = m_web_segments[is]->GetRot() * z2y;
-        auto bushing = chrono_types::make_shared<ChVehicleJoint>(
-            ChVehicleJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), m_web_segments[is + 1],
+        auto bushing = chrono_types::make_shared<ChJoint>(
+            ChJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), m_web_segments[is + 1],
             m_web_segments[is], ChFrame<>(loc, rot), GetBushingData());
         bushing->SetTag(m_obj_tag);
         chassis->AddJoint(bushing);
@@ -190,8 +190,8 @@ void ChTrackShoeBandBushing::Connect(std::shared_ptr<ChTrackShoe> next,
         int is = GetNumWebSegments() - 1;
         ChVector3d loc = m_web_segments[is]->TransformPointLocalToParent(ChVector3d(m_seg_length / 2, 0, 0));
         ChQuaternion<> rot = m_web_segments[is]->GetRot() * z2y;
-        auto bushing = chrono_types::make_shared<ChVehicleJoint>(
-            ChVehicleJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), next->GetShoeBody(),
+        auto bushing = chrono_types::make_shared<ChJoint>(
+            ChJoint::Type::REVOLUTE, m_name + "_bushing_" + std::to_string(index++), next->GetShoeBody(),
             m_web_segments[is], ChFrame<>(loc, rot), GetBushingData());
         bushing->SetTag(m_obj_tag);
         chassis->AddJoint(bushing);
@@ -204,27 +204,15 @@ ChVector3d ChTrackShoeBandBushing::GetTension() const {
 }
 
 // -----------------------------------------------------------------------------
-void ChTrackShoeBandBushing::ExportComponentList(rapidjson::Document& jsonDocument) const {
-    ChPart::ExportComponentList(jsonDocument);
 
-    std::vector<std::shared_ptr<ChBody>> bodies;
-    bodies.push_back(m_shoe);
-    bodies.insert(bodies.end(), m_web_segments.begin(), m_web_segments.end());
-    ExportBodyList(jsonDocument, bodies);
-
-    ExportBodyLoadList(jsonDocument, m_web_bushings);
-}
-
-void ChTrackShoeBandBushing::Output(ChVehicleOutput& database) const {
+void ChTrackShoeBandBushing::PopulateComponentList() {
     if (!m_output)
         return;
 
-    std::vector<std::shared_ptr<ChBody>> bodies;
-    bodies.push_back(m_shoe);
-    bodies.insert(bodies.end(), m_web_segments.begin(), m_web_segments.end());
-    database.WriteBodies(bodies);
+    m_bodies.push_back(m_shoe);
+    m_bodies.insert(m_bodies.end(), m_web_segments.begin(), m_web_segments.end());
 
-    database.WriteBodyLoads(m_web_bushings);
+    m_body_loads.insert(m_body_loads.end(), m_web_bushings.begin(), m_web_bushings.end());
 }
 
 }  // end namespace vehicle

@@ -27,7 +27,7 @@
 
 #include "chrono/assets/ChColor.h"
 #include "chrono/physics/ChLinkMotorLinearPosition.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
+#include "chrono/input_output/ChWriterCSV.h"
 
 #include "chrono_vehicle/wheeled_vehicle/ChTire.h"
 #include "chrono_vehicle/wheeled_vehicle/ChWheeledVehicle.h"
@@ -132,7 +132,8 @@ class CH_VEHICLE_API ChSuspensionTestRig {
     void LogConstraintViolations();
 
     /// Enable output for this vehicle system (default: false).
-    void SetOutput(ChVehicleOutput::Type type,   ///< type of output DB
+    void SetOutput(ChOutput::Type type,          ///< type of output DB
+                   ChOutput::Mode mode,          ///< output mode
                    const std::string& out_dir,   ///< output directory name
                    const std::string& out_name,  ///< rootname of output file
                    double output_step            ///< interval between output times
@@ -223,8 +224,8 @@ class CH_VEHICLE_API ChSuspensionTestRig {
 
     /// Plot data for one axle.
     struct PlotData {
-        utils::ChWriterCSV csvL;  ///< csv output for left side
-        utils::ChWriterCSV csvR;  ///< csv output for right side
+        ChWriterCSV csvL;  ///< csv output for left side
+        ChWriterCSV csvR;  ///< csv output for right side
         int num_tsda;             ///< number of TSDAs
         int num_rsda;             ///< number of RSDAs
     };

@@ -33,7 +33,6 @@
 
 #include "chrono/utils/ChUtilsCreators.h"
 #include "chrono/utils/ChUtilsGenerators.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
 
 #include "chrono/assets/ChVisualShapeTriangleMesh.h"
 
@@ -648,7 +647,7 @@ void ChVehicleCosimTerrainNodeGranularOMP::Settle() {
         // Output (if enabled)
         if (m_settling_output && steps % output_steps == 0) {
             std::string filename = OutputFilename(m_node_out_dir + "/settling", "settling", "dat", output_frame + 1, 5);
-            utils::ChWriterCSV csv(" ");
+            ChWriterCSV csv(" ");
             WriteParticleInformation(csv);
             csv.WriteToFile(filename);
             output_frame++;
@@ -770,9 +769,9 @@ void ChVehicleCosimTerrainNodeGranularOMP::CreateMeshProxy(unsigned int i) {
     auto proxy = chrono_types::make_shared<ProxyBodySet>();
 
     // Note: it is assumed that there is one and only one mesh defined!
-    auto nt = m_geometry[i_shape].coll_meshes[0].trimesh->GetNumTriangles();
-    auto i_mat = m_geometry[i_shape].coll_meshes[0].matID;
-    auto material = m_geometry[i_shape].materials[i_mat].CreateMaterial(m_method);
+    auto nt = m_geometry[i_shape]->coll_meshes[0].trimesh->GetNumTriangles();
+    auto i_mat = m_geometry[i_shape]->coll_meshes[0].matID;
+    auto material = m_geometry[i_shape]->materials[i_mat].CreateMaterial(m_method);
 
     //// RADU TODO:  better approximation of mass / inertia?
     double mass_p = m_load_mass[i_shape] / nt;
@@ -820,12 +819,12 @@ void ChVehicleCosimTerrainNodeGranularOMP::CreateRigidProxy(unsigned int i) {
     body->EnableCollision(true);
 
     // Create visualization assets (use collision shapes)
-    m_geometry[i_shape].CreateVisualizationAssets(body, VisualizationType::COLLISION);
+    m_geometry[i_shape]->CreateVisualizationAssets(body, VisualizationType::COLLISION);
 
     // Create collision shapes
-    for (auto& mesh : m_geometry[i_shape].coll_meshes)
+    for (auto& mesh : m_geometry[i_shape]->coll_meshes)
         mesh.radius = m_radius_p;
-    m_geometry[i_shape].CreateCollisionShapes(body, 1, m_method);
+    m_geometry[i_shape]->CreateCollisionShapes(body, 1, m_method);
     body->GetCollisionModel()->SetFamily(1);
     body->GetCollisionModel()->DisallowCollisionsWith(1);
 
@@ -876,7 +875,7 @@ void ChVehicleCosimTerrainNodeGranularOMP::UpdateMeshProxy(unsigned int i, MeshS
     auto proxy = std::static_pointer_cast<ProxyBodySet>(m_proxies[i]);
 
     // Note: it is assumed that there is one and only one mesh defined!
-    const auto& trimesh = m_geometry[i_shape].coll_meshes[0].trimesh;
+    const auto& trimesh = m_geometry[i_shape]->coll_meshes[0].trimesh;
     const auto& idx_verts = trimesh->GetIndicesVertexes();
     int nt = trimesh->GetNumTriangles();
 
@@ -909,7 +908,7 @@ void ChVehicleCosimTerrainNodeGranularOMP::UpdateMeshProxy(unsigned int i, MeshS
         //// RADU TODO: angular velocity
         proxy->bodies[it]->SetAngVelLocal(ChVector3d(0, 0, 0));
 
-        // Update triangle contact shape (expressed in local frame) by writting directly
+        // Update triangle contact shape (expressed in local frame) by writing directly
         // into the Chrono::Multicore data structures.
         // ATTENTION: It is assumed that no other triangle contact shapes have been added
         // to the system BEFORE those corresponding to the object mesh faces!
@@ -965,7 +964,7 @@ void ChVehicleCosimTerrainNodeGranularOMP::GetForceMeshProxy(unsigned int i, Mes
     auto proxy = std::static_pointer_cast<ProxyBodySet>(m_proxies[i]);
 
     // Note: it is assumed that there is one and only one mesh defined!
-    const auto& trimesh = m_geometry[i_shape].coll_meshes[0].trimesh;
+    const auto& trimesh = m_geometry[i_shape]->coll_meshes[0].trimesh;
     const auto& idx_verts = trimesh->GetIndicesVertexes();
     int nt = trimesh->GetNumTriangles();
 
@@ -1056,14 +1055,14 @@ void ChVehicleCosimTerrainNodeGranularOMP::OnOutputData(int frame) {
     // Create and write frame output file.
     std::string filename = OutputFilename(m_node_out_dir + "/simulation", "simulation", "dat", frame + 1, 5);
 
-    utils::ChWriterCSV csv(" ");
+    ChWriterCSV csv(" ");
     WriteParticleInformation(csv);
     csv.WriteToFile(filename);
 }
 
 // -----------------------------------------------------------------------------
 
-void ChVehicleCosimTerrainNodeGranularOMP::WriteParticleInformation(utils::ChWriterCSV& csv) {
+void ChVehicleCosimTerrainNodeGranularOMP::WriteParticleInformation(ChWriterCSV& csv) {
     // Write particle positions and linear velocities
     for (auto body : m_system->GetBodies()) {
         if (body->GetTag() < tag_particles)
@@ -1073,7 +1072,7 @@ void ChVehicleCosimTerrainNodeGranularOMP::WriteParticleInformation(utils::ChWri
 }
 
 void ChVehicleCosimTerrainNodeGranularOMP::WriteCheckpoint(const std::string& filename) const {
-    utils::ChWriterCSV csv(" ");
+    ChWriterCSV csv(" ");
 
     // Write current time and number of granular material bodies.
     csv << m_system->GetChTime() << endl;

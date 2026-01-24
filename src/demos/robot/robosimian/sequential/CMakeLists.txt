@@ -2,7 +2,6 @@
 # ------------------------------------------------------------------------------
 
 if(NOT CH_ENABLE_MODULE_IRRLICHT)
-  message(STATUS "  Warning: the sequential RoboSimian projects require Chrono::Irrlicht")
   return()
 endif()
 
@@ -38,5 +37,5 @@ foreach(PROGRAM ${DEMOS})
       set_target_properties(${PROGRAM} PROPERTIES MSVC_RUNTIME_LIBRARY ${CH_MSVC_RUNTIME_LIBRARY})
     endif()
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

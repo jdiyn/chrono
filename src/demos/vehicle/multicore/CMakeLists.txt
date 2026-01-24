@@ -11,9 +11,9 @@ endif()
 # List all demos
 
 set(DEMOS
-    demo_VEH_Multicore_HMMWV
-    demo_VEH_Multicore_M113
-    demo_VEH_Multicore_TireTestRig
+    demo_VEH_HMMWV_Multicore
+    demo_VEH_M113_Multicore
+    demo_VEH_TireTestRig_Multicore
 )
 
 #--------------------------------------------------------------
@@ -35,5 +35,5 @@ foreach(PROGRAM ${DEMOS})
       set_target_properties(${PROGRAM} PROPERTIES MSVC_RUNTIME_LIBRARY ${CH_MSVC_RUNTIME_LIBRARY})
     endif()
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

@@ -2,7 +2,6 @@
 # ------------------------------------------------------------------------------
 
 if(NOT CH_ENABLE_MODULE_IRRLICHT)
-  message(STATUS "  Warning: the Industrial projects require Chrono::Irrlicht")
   return()
 endif()
 
@@ -34,5 +33,5 @@ foreach(PROGRAM ${DEMOS})
                           Chrono_irrlicht
                           ChronoModels_robot)
 
-    install(TARGETS ${PROGRAM} DESTINATION ${CH_INSTALL_DEMO})
+    install(TARGETS ${PROGRAM} CONFIGURATIONS Release DESTINATION ${CH_INSTALL_DEMO})
 endforeach()

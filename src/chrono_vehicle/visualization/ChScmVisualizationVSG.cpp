@@ -12,6 +12,8 @@
 // Authors: Radu Serban
 // =============================================================================
 
+#include <algorithm>
+
 #include "chrono/assets/ChVisualShapeSphere.h"
 #include "chrono/assets/ChVisualShapeBox.h"
 
@@ -19,8 +21,8 @@
 
 #include "chrono_vehicle/visualization/ChScmVisualizationVSG.h"
 
-#include "chrono_vsg/utils/ChConversionsVSG.h"
-#include "chrono_vsg/shapes/ShapeBuilder.h"
+#include "chrono_vsg/utils/ChDataUtilsVSG.h"
+#include "chrono_vsg/utils/ChShapeBuilderVSG.h"
 
 namespace chrono {
 namespace vehicle {
@@ -94,6 +96,11 @@ ChScmVisualizationVSG::ChScmVisualizationVSG(SCMTerrain* scm)
 }
 
 ChScmVisualizationVSG::~ChScmVisualizationVSG() {
+    auto& systems = m_vsys->GetSystems();
+    auto index = std::find(systems.begin(), systems.end(), m_sys);
+    if (index != systems.end())
+        systems.erase(index);
+
     delete m_sys;
 }
 

@@ -23,6 +23,11 @@ if(POLICY CMP0104)
 endif()
 
 #-----------------------------------------------------------------------------
+# Set configuration-specific postfixes
+#-----------------------------------------------------------------------------
+set(CH_DEBUG_POSTFIX "_d")
+
+#-----------------------------------------------------------------------------
 # Choose to build either shared or static libraries as default
 #-----------------------------------------------------------------------------
 option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
@@ -130,13 +135,25 @@ endif()
 #-----------------------------------------------------------------------------
 
 message(STATUS "Searching for Eigen3")
-find_package(Eigen3 3.3 QUIET)
-if(EIGEN3_FOUND)
-  message(STATUS "  Eigen3 found. EIGEN3_INCLUDE_DIR: ${EIGEN3_INCLUDE_DIR}")
+
+# Look first for Eigen 5.0, then 3.
+message(STATUS "  Try Eigen 5.0 or newer")
+find_package(Eigen3 5.0 QUIET)
+if(NOT Eigen3_FOUND)
+   message(STATUS "  Try Eigen 3.3 or newer")
+   find_package(Eigen3 3.3 QUIET)
+endif()
+
+if(Eigen3_FOUND)
+  message(STATUS "Eigen3 found")
+  message(STATUS "  Eigen3 version:     ${EIGEN3_VERSION}")
+  message(STATUS "  Eigen3 include dir: ${EIGEN3_INCLUDE_DIR}")
   mark_as_advanced(FORCE EIGEN3_INCLUDE_DIR)
   mark_as_advanced(FORCE Eigen3_DIR)
 else()
-  message(ERROR "  Eigen3 cannot be found. Set either EIGEN3_INCLUDE_DIR or the envvar Eigen3_ROOT to the location of Eigen library or provide location of Eigen3Config.cmake through Eigen3_DIR.")
+  message(ERROR "Eigen3 cannot be found.\n"
+          "  Provide Eigen3_DIR (location of Eigen3Config.cmake) or else\n" 
+          "  set either EIGEN3_INCLUDE_DIR or the envvar Eigen3_ROOT to the location of Eigen library.")
   set(EIGEN3_INCLUDE_DIR "" CACHE PATH "Path to Eigen3 directory (should contain a subfolder named \"Eigen\"")
   set(Eigen3_DIR "" CACHE PATH "Path to Eigen3 config file (should contain the \"Eigen3Config.cmake\" file")
   mark_as_advanced(CLEAR EIGEN3_INCLUDE_DIR)
@@ -377,45 +394,14 @@ endif()
 option(CH_ENABLE_HDF5 "Enable HDF5 support" OFF)
 
 if(CH_ENABLE_HDF5)
-
     message(STATUS "Searching for HDF5...")
-
-    # First look for a FindHDF5.cmake module
-    # If found, this will define the following relevant variables:
-    #    HDF5_INCLUDE_DIRS
-    #    HDF5_C_LIBRARIES
-    #    HDF5_CXX_LIBRARIES
     find_package(HDF5 COMPONENTS CXX)
-
-    if(NOT HDF5_FOUND)
-        # Look for a package configuration file
-        # LIB_TYPE can be one of STATIC or SHARED.
-        set(LIB_TYPE SHARED) # STATIC or SHARED
-        string(TOLOWER ${LIB_TYPE} SEARCH_TYPE)
-        find_package(HDF5 NAMES hdf5 COMPONENTS CXX ${SEARCH_TYPE})
-
-        if (HDF5_FOUND)
-            set(HDF5_INCLUDE_DIRS ${HDF5_INCLUDE_DIR})
-            set(HDF5_C_LIBRARIES ${HDF5_C_${LIB_TYPE}_LIBRARY})
-            set(HDF5_CXX_LIBRARIES ${HDF5_CXX_${LIB_TYPE}_LIBRARY})
-        endif()
-    endif()
 
     if (HDF5_FOUND)
         message(STATUS "  HDF5 found         (HDF5_FOUND)         ${HDF5_FOUND}")
         message(STATUS "  HDF5 include dirs  (HDF5_INCLUDE_DIR)   ${HDF5_INCLUDE_DIRS}")
-        message(STATUS "  HDF5 C libraries   (HDF5_C_LIBRARIES)   ${HDF5_C_LIBRARIES}")
         message(STATUS "  HDF5 C++ libraries (HDF5_CXX_LIBRARIES) ${HDF5_CXX_LIBRARIES}")
-
-        # If using shared libraries on Windows, MUST define H5_BUILT_AS_DYNAMIC_LIB to have
-        # the symbols imported from the DLL.  Note also that the path to the HDF5 DLLs must
-        # be in the search path (or else copied in the working directory).
-        if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-            set(HDF5_COMPILE_DEFS "H5_BUILT_AS_DYNAMIC_LIB")
-            message(STATUS "  HDF5 compile defs  (HDF5_COMPILE_DEFS)  ${HDF5_COMPILE_DEFS}")
-        else()
-            set(HDF5_COMPILE_DEFS "")
-        endif()
+        message(STATUS "  HDF5 libraries     (HDF5_LIBRARIES)     ${HDF5_LIBRARIES}")
 
         set(CHRONO_HAS_HDF5 "#define CHRONO_HAS_HDF5")
     else()
@@ -517,7 +503,7 @@ add_subdirectory(chrono_postprocess)
 add_subdirectory(chrono_peridynamics)
 add_subdirectory(chrono_multicore)
 add_subdirectory(chrono_fsi)
-add_subdirectory(chrono_gpu)
+add_subdirectory(chrono_dem)
 add_subdirectory(chrono_vehicle)
 add_subdirectory(chrono_models)
 add_subdirectory(chrono_sensor)
@@ -650,14 +636,26 @@ endif()
 
 if(CH_ENABLE_MODULE_FSI)
   set(CHRONO_FSI "#define CHRONO_FSI")
+  if(CH_ENABLE_MODULE_FSI_SPH)
+    set(CHRONO_FSI_SPH "#define CHRONO_FSI_SPH")
+  else()
+    set(CHRONO_FSI_SPH "#undef CHRONO_FSI_SPH")
+  endif()
+  if(CH_ENABLE_MODULE_FSI_TDPF)
+    set(CHRONO_FSI_TDPF "#define CHRONO_FSI_TDPF")
+  else()
+    set(CHRONO_FSI_TDPF "#undef CHRONO_FSI_TDPF")
+  endif()
 else()
   set(CHRONO_FSI "#undef CHRONO_FSI")
+  set(CHRONO_FSI_SPH "#undef CHRONO_FSI_SPH")
+  set(CHRONO_FSI_TDPF "#undef CHRONO_FSI_TDPF")
 endif()
 
-if(CH_ENABLE_MODULE_GPU)
-  set(CHRONO_GPU "#define CHRONO_GPU")
+if(CH_ENABLE_MODULE_DEM)
+  set(CHRONO_DEM "#define CHRONO_DEM")
 else()
-  set(CHRONO_GPU "#undef CHRONO_GPU")
+  set(CHRONO_DEM "#undef CHRONO_DEM")
 endif()
 
 if(CH_ENABLE_MODULE_SENSOR)
@@ -720,6 +718,12 @@ else()
   set(CHRONO_COLLISION "#undef CHRONO_COLLISION")
 endif()
 
+if(CH_CXX17)
+    set(CHRONO_HAS_CXX17 "#define CHRONO_HAS_CXX17")
+else()
+    set(CHRONO_HAS_CXX17 "#undef CHRONO_HAS_CXX17")
+endif()
+
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/chrono/ChConfig.h.in"
                "${PROJECT_BINARY_DIR}/chrono/ChConfig.h"
                @ONLY)
@@ -750,8 +754,9 @@ install(FILES "${CMAKE_SOURCE_DIR}/cmake/FindEigen3.cmake"
         DESTINATION ${CH_CONFIG_INSTALL_PATH}
         )
 
-# Create Chrono configuration header in build and install trees
+# Create Chrono project configuration script in install and build trees
 set(CH_INSTALL_TREE TRUE)
+set(CH_BUILD_TREE_DIR "")
 configure_package_config_file(
   "${CMAKE_SOURCE_DIR}/cmake/chrono-config.cmake.in"
   "${CMAKE_BINARY_DIR}/cmake/chrono-config.cmake-install"
@@ -759,6 +764,7 @@ configure_package_config_file(
 )
 
 set(CH_INSTALL_TREE FALSE)
+set(CH_BUILD_TREE_DIR "${PROJECT_BINARY_DIR}")
 configure_package_config_file(
   "${CMAKE_SOURCE_DIR}/cmake/chrono-config.cmake.in"
   "${CMAKE_BINARY_DIR}/cmake/chrono-config.cmake"
@@ -766,6 +772,7 @@ configure_package_config_file(
 )
 
 unset(CH_INSTALL_TREE)
+unset(CH_BUILD_TREE_DIR)
 
 # install config files
 install(FILES

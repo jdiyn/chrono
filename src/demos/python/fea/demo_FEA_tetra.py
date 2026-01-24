@@ -20,6 +20,7 @@ print( "TEST: tetrahedron FEM dynamics, implicit integration")
 print( "-----------------------------------------------------------")
 
 sys = chrono.ChSystemSMC()
+sys.SetGravityY()
 
 # FEA mesh
 mesh = fea.ChMesh()
@@ -94,7 +95,7 @@ vis.AttachSystem(sys)
 vis.SetWindowSize(1024,768)
 vis.SetWindowTitle('Tetra Element')
 vis.Initialize()
-vis.AddLogo(chrono.GetChronoDataFile('logo_pychrono_alpha.png'))
+vis.AddLogo(chrono.GetChronoDataFile('logo_chrono_alpha.png'))
 vis.AddSkyBox()
 vis.AddCamera(chrono.ChVector3d(2, 0.25, -0.25), chrono.ChVector3d(0, 0.25, 0))
 vis.AddTypicalLights()

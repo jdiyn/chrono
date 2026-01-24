@@ -15,7 +15,7 @@
 #include <cstdlib>
 #include <algorithm>
 
-#include "chrono/core/ChGlobal.h"
+#include "chrono/core/ChDataPath.h"
 #include "chrono/physics/ChBody.h"
 #include "chrono/physics/ChForce.h"
 #include "chrono/physics/ChMarker.h"
@@ -27,7 +27,7 @@ namespace chrono {
 CH_FACTORY_REGISTER(ChBody)
 CH_UPCASTING(ChBody, ChPhysicsItem)
 CH_UPCASTING(ChBody, ChBodyFrame)
-CH_UPCASTING_SANITIZED(ChBody, ChContactable_1vars<6>, ChBody_ChContactable_1vars_6)
+CH_UPCASTING(ChBody, ChContactable)
 CH_UPCASTING(ChBody, ChLoadableUVW)
 
 ChBody::ChBody()
@@ -53,6 +53,9 @@ ChBody::ChBody()
     sleep_minwvel = 0.04f;
 
     variables.SetUserData((void*)this);
+
+    // Load contactable variables list
+    m_contactable_variables.push_back(&variables);
 }
 
 ChBody::ChBody(const ChBody& other) : ChPhysicsItem(other), ChBodyFrame(other) {
@@ -66,6 +69,9 @@ ChBody::ChBody(const ChBody& other) : ChPhysicsItem(other), ChBodyFrame(other) {
 
     variables = other.variables;
     variables.SetUserData((void*)this);
+
+    m_contactable_variables.clear();
+    m_contactable_variables.push_back(&variables);
 
     gyro = other.gyro;
 
@@ -112,13 +118,14 @@ void ChBody::IntStateScatter(const unsigned int off_x,  // offset in x state vec
                              const unsigned int off_v,  // offset in v state vector
                              const ChStateDelta& v,     // state vector, speed part
                              const double T,            // time
-                             bool full_update           // perform complete update
+                             UpdateFlags update_flags    // perform complete update?
 ) {
     SetCoordsys(x.segment(off_x, 7));
     SetPosDt(v.segment(off_v + 0, 3));
     SetAngVelLocal(v.segment(off_v + 3, 3));
     SetChTime(T);
-    Update(T, full_update);
+
+    Update(T, update_flags);
 }
 
 void ChBody::IntStateGatherAcceleration(const unsigned int off_a, ChStateDelta& a) {
@@ -536,13 +543,13 @@ std::shared_ptr<ChForce> ChBody::SearchForce(const std::string& name) const {
 
 // -----------------------------------------------------------------------------
 
-void ChBody::UpdateMarkers(double time, bool update_assets) {
+void ChBody::UpdateMarkers(double time, UpdateFlags update_flags) {
     for (auto& marker : marklist) {
-        marker->Update(time, update_assets);
+        marker->Update(time, update_flags);
     }
 }
 
-void ChBody::UpdateForces(double time, bool update_assets) {
+void ChBody::UpdateForces(double time, UpdateFlags update_flags) {
     // Initialize body forces with gravitational forces (if included in a system)
     Xforce = system ? system->GetGravitationalAcceleration() * GetMass() : VNULL;
     Xtorque = VNULL;
@@ -555,7 +562,7 @@ void ChBody::UpdateForces(double time, bool update_assets) {
 
     // Accumulate applied generalized forces (if any)
     for (auto& f : forcelist) {
-        f->Update(time, update_assets);
+        f->Update(time, update_flags);
 
         ChVector3d force;
         ChVector3d torque;
@@ -566,9 +573,9 @@ void ChBody::UpdateForces(double time, bool update_assets) {
     }
 }
 
-void ChBody::Update(double time, bool update_assets) {
+void ChBody::Update(double time, UpdateFlags update_flags) {
     // Update time and assets
-    ChObj::Update(time, update_assets);
+    ChObj::Update(time, update_flags);
 
     // Test if body can be set asleep and if so, put it to sleeping
     ////TrySleeping();
@@ -580,10 +587,10 @@ void ChBody::Update(double time, bool update_assets) {
     ComputeGyro();
 
     // Updated associated markers at current body state
-    UpdateMarkers(time, update_assets);
+    UpdateMarkers(time, update_flags);
 
     // Update applied forces at current body state
-    UpdateForces(time, update_assets);
+    UpdateForces(time, update_flags);
 }
 
 // -----------------------------------------------------------------------------
@@ -648,7 +655,7 @@ void ChBody::EnableCollision(bool state) {
         return;
 
     // Nothing to do if no collision system or the system was not initialized
-    // (in the latter case, the collsion model will be processed at initialization)
+    // (in the latter case, the collision model will be processed at initialization)
     auto coll_sys = GetSystem()->GetCollisionSystem();
     if (!coll_sys || !coll_sys->IsInitialized())
         return;
@@ -770,9 +777,9 @@ void ChBody::ContactComputeQ(const ChVector3d& F,
 
 void ChBody::ComputeJacobianForContactPart(const ChVector3d& abs_point,
                                            ChMatrix33<>& contact_plane,
-                                           ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_N,
-                                           ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_U,
-                                           ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_V,
+                                           ChConstraintTuple* jacobian_tuple_N,
+                                           ChConstraintTuple* jacobian_tuple_U,
+                                           ChConstraintTuple* jacobian_tuple_V,
                                            bool second) {
     /*
     ChVector3d p1 = TransformPointParentToLocal(abs_point);
@@ -823,68 +830,85 @@ void ChBody::ComputeJacobianForContactPart(const ChVector3d& abs_point,
     // Jr1 = [ p1y*(temp00) - p1z*(temp10), p1z*(temp20) - p1x*(temp00), p1x*(temp10) - p1y*(temp20);
     //       p1y*(temp01) - p1z*(temp11), p1z*(temp21) - p1x*(temp01), p1x*(temp11) - p1y*(temp21);
     //       p1y*(temp02) - p1z*(temp12), p1z*(temp22) - p1x*(temp02), p1x*(temp12) - p1y*(temp22)];
+
+    auto tuple_N = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_N);
+    auto tuple_U = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_U);
+    auto tuple_V = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_V);
+
+    auto Cq_N = tuple_N->Cq1();
+    auto Cq_U = tuple_U->Cq1();
+    auto Cq_V = tuple_V->Cq1();
+
     if (!second) {
-        jacobian_tuple_N.Get_Cq()(0) = -contact_plane(0, 0);
-        jacobian_tuple_N.Get_Cq()(1) = -contact_plane(1, 0);
-        jacobian_tuple_N.Get_Cq()(2) = -contact_plane(2, 0);
-        jacobian_tuple_N.Get_Cq()(3) = -p1.y() * temp00 + p1.z() * temp10;
-        jacobian_tuple_N.Get_Cq()(4) = -p1.z() * temp20 + p1.x() * temp00;
-        jacobian_tuple_N.Get_Cq()(5) = -p1.x() * temp10 + p1.y() * temp20;
+        Cq_N(0) = -contact_plane(0, 0);
+        Cq_N(1) = -contact_plane(1, 0);
+        Cq_N(2) = -contact_plane(2, 0);
+        Cq_N(3) = -p1.y() * temp00 + p1.z() * temp10;
+        Cq_N(4) = -p1.z() * temp20 + p1.x() * temp00;
+        Cq_N(5) = -p1.x() * temp10 + p1.y() * temp20;
 
-        jacobian_tuple_U.Get_Cq()(0) = -contact_plane(0, 1);
-        jacobian_tuple_U.Get_Cq()(1) = -contact_plane(1, 1);
-        jacobian_tuple_U.Get_Cq()(2) = -contact_plane(2, 1);
-        jacobian_tuple_U.Get_Cq()(3) = -p1.y() * temp01 + p1.z() * temp11;
-        jacobian_tuple_U.Get_Cq()(4) = -p1.z() * temp21 + p1.x() * temp01;
-        jacobian_tuple_U.Get_Cq()(5) = -p1.x() * temp11 + p1.y() * temp21;
+        Cq_U(0) = -contact_plane(0, 1);
+        Cq_U(1) = -contact_plane(1, 1);
+        Cq_U(2) = -contact_plane(2, 1);
+        Cq_U(3) = -p1.y() * temp01 + p1.z() * temp11;
+        Cq_U(4) = -p1.z() * temp21 + p1.x() * temp01;
+        Cq_U(5) = -p1.x() * temp11 + p1.y() * temp21;
 
-        jacobian_tuple_V.Get_Cq()(0) = -contact_plane(0, 2);
-        jacobian_tuple_V.Get_Cq()(1) = -contact_plane(1, 2);
-        jacobian_tuple_V.Get_Cq()(2) = -contact_plane(2, 2);
-        jacobian_tuple_V.Get_Cq()(3) = -p1.y() * temp02 + p1.z() * temp12;
-        jacobian_tuple_V.Get_Cq()(4) = -p1.z() * temp22 + p1.x() * temp02;
-        jacobian_tuple_V.Get_Cq()(5) = -p1.x() * temp12 + p1.y() * temp22;
+        Cq_V(0) = -contact_plane(0, 2);
+        Cq_V(1) = -contact_plane(1, 2);
+        Cq_V(2) = -contact_plane(2, 2);
+        Cq_V(3) = -p1.y() * temp02 + p1.z() * temp12;
+        Cq_V(4) = -p1.z() * temp22 + p1.x() * temp02;
+        Cq_V(5) = -p1.x() * temp12 + p1.y() * temp22;
     } else {
-        jacobian_tuple_N.Get_Cq()(0) = contact_plane(0, 0);
-        jacobian_tuple_N.Get_Cq()(1) = contact_plane(1, 0);
-        jacobian_tuple_N.Get_Cq()(2) = contact_plane(2, 0);
-        jacobian_tuple_N.Get_Cq()(3) = p1.y() * temp00 - p1.z() * temp10;
-        jacobian_tuple_N.Get_Cq()(4) = p1.z() * temp20 - p1.x() * temp00;
-        jacobian_tuple_N.Get_Cq()(5) = p1.x() * temp10 - p1.y() * temp20;
+        Cq_N(0) = contact_plane(0, 0);
+        Cq_N(1) = contact_plane(1, 0);
+        Cq_N(2) = contact_plane(2, 0);
+        Cq_N(3) = p1.y() * temp00 - p1.z() * temp10;
+        Cq_N(4) = p1.z() * temp20 - p1.x() * temp00;
+        Cq_N(5) = p1.x() * temp10 - p1.y() * temp20;
 
-        jacobian_tuple_U.Get_Cq()(0) = contact_plane(0, 1);
-        jacobian_tuple_U.Get_Cq()(1) = contact_plane(1, 1);
-        jacobian_tuple_U.Get_Cq()(2) = contact_plane(2, 1);
-        jacobian_tuple_U.Get_Cq()(3) = p1.y() * temp01 - p1.z() * temp11;
-        jacobian_tuple_U.Get_Cq()(4) = p1.z() * temp21 - p1.x() * temp01;
-        jacobian_tuple_U.Get_Cq()(5) = p1.x() * temp11 - p1.y() * temp21;
+        Cq_U(0) = contact_plane(0, 1);
+        Cq_U(1) = contact_plane(1, 1);
+        Cq_U(2) = contact_plane(2, 1);
+        Cq_U(3) = p1.y() * temp01 - p1.z() * temp11;
+        Cq_U(4) = p1.z() * temp21 - p1.x() * temp01;
+        Cq_U(5) = p1.x() * temp11 - p1.y() * temp21;
 
-        jacobian_tuple_V.Get_Cq()(0) = contact_plane(0, 2);
-        jacobian_tuple_V.Get_Cq()(1) = contact_plane(1, 2);
-        jacobian_tuple_V.Get_Cq()(2) = contact_plane(2, 2);
-        jacobian_tuple_V.Get_Cq()(3) = p1.y() * temp02 - p1.z() * temp12;
-        jacobian_tuple_V.Get_Cq()(4) = p1.z() * temp22 - p1.x() * temp02;
-        jacobian_tuple_V.Get_Cq()(5) = p1.x() * temp12 - p1.y() * temp22;
+        Cq_V(0) = contact_plane(0, 2);
+        Cq_V(1) = contact_plane(1, 2);
+        Cq_V(2) = contact_plane(2, 2);
+        Cq_V(3) = p1.y() * temp02 - p1.z() * temp12;
+        Cq_V(4) = p1.z() * temp22 - p1.x() * temp02;
+        Cq_V(5) = p1.x() * temp12 - p1.y() * temp22;
     }
 }
 
-void ChBody::ComputeJacobianForRollingContactPart(
-    const ChVector3d& abs_point,
-    ChMatrix33<>& contact_plane,
-    ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_N,
-    ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_U,
-    ChVariableTupleCarrier_1vars<6>::type_constraint_tuple& jacobian_tuple_V,
-    bool second) {
+void ChBody::ComputeJacobianForRollingContactPart(const ChVector3d& abs_point,
+                                                  ChMatrix33<>& contact_plane,
+                                                  ChConstraintTuple* jacobian_tuple_N,
+                                                  ChConstraintTuple* jacobian_tuple_U,
+                                                  ChConstraintTuple* jacobian_tuple_V,
+                                                  bool second) {
     ChMatrix33<> Jr1 = contact_plane.transpose() * GetRotMat();
     if (!second)
         Jr1 *= -1;
 
-    jacobian_tuple_N.Get_Cq().segment(0, 3).setZero();
-    jacobian_tuple_U.Get_Cq().segment(0, 3).setZero();
-    jacobian_tuple_V.Get_Cq().segment(0, 3).setZero();
-    jacobian_tuple_N.Get_Cq().segment(3, 3) = Jr1.row(0);
-    jacobian_tuple_U.Get_Cq().segment(3, 3) = Jr1.row(1);
-    jacobian_tuple_V.Get_Cq().segment(3, 3) = Jr1.row(2);
+    auto tuple_N = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_N);
+    auto tuple_U = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_U);
+    auto tuple_V = static_cast<ChConstraintTuple_1vars<6>*>(jacobian_tuple_V);
+
+    auto Cq_N = tuple_N->Cq1();
+    auto Cq_U = tuple_U->Cq1();
+    auto Cq_V = tuple_V->Cq1();
+
+    Cq_N.segment(0, 3).setZero();
+    Cq_U.segment(0, 3).setZero();
+    Cq_V.segment(0, 3).setZero();
+
+    Cq_N.segment(3, 3) = Jr1.row(0);
+    Cq_U.segment(3, 3) = Jr1.row(1);
+    Cq_V.segment(3, 3) = Jr1.row(2);
 }
 
 ChVector3d ChBody::GetAppliedForce() {

@@ -32,11 +32,6 @@ def CastNode(nb):
     return nodeFead
 
 
-# The path to the Chrono data directory containing various assets (meshes, textures, data files)
-# is automatically set, relative to the default location of this demo.
-# If running from a different directory, you must change the path to the data directory with: 
-#chrono.SetChronoDataPath('path/to/data')
-
 time_step = 1e-3
 
 sys = chrono.ChSystemSMC()
@@ -172,7 +167,7 @@ vis.AttachSystem(sys)
 vis.SetWindowSize(1024,768)
 vis.SetWindowTitle('ANCF shells')
 vis.Initialize()
-vis.AddLogo(chrono.GetChronoDataFile('logo_pychrono_alpha.png'))
+vis.AddLogo(chrono.GetChronoDataFile('logo_chrono_alpha.png'))
 vis.AddSkyBox()
 vis.AddCamera(chrono.ChVector3d(-0.4, -1.3, 0.0), chrono.ChVector3d(0.0, 0.5, -0.1))
 vis.AddTypicalLights()

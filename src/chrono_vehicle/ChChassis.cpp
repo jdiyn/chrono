@@ -38,7 +38,7 @@ ChChassis::ChChassis(const std::string& name, bool fixed) : ChPart(name), m_fixe
 }
 
 ChChassis::~ChChassis() {
-    if (!m_initialized)
+    if (!IsInitialized())
         return;
 
     auto sys = m_body->GetSystem();
@@ -120,6 +120,10 @@ double ChChassis::GetTurnRate() const {
     return Vdot(w, ChWorldFrame::Vertical());
 }
 
+void ChChassis::PopulateComponentList() {
+    m_bodies.push_back(m_body);
+}
+
 void ChChassis::Initialize(ChVehicle* vehicle,
                            const ChCoordsys<>& chassisPos,
                            double chassisFwdVel,
@@ -158,8 +162,8 @@ void ChChassis::Initialize(ChVehicle* vehicle,
 
     Construct(vehicle, chassisPos, chassisFwdVel, collision_family);
 
-    // Mark as initialized
-    m_initialized = true;
+    // Initialize part
+    ChPart::Initialize();
 }
 
 void ChChassis::AddMarker(const std::string& name, const ChFrame<>& frame) {
@@ -191,17 +195,17 @@ void ChChassis::AddExternalForceTorque(std::shared_ptr<ExternalForceTorque> load
     m_container_external->Add(torque_load);
 }
 
-void ChChassis::AddJoint(std::shared_ptr<ChVehicleJoint> joint) {
-    if (joint->m_joint.index() == 0) {
-        m_body->GetSystem()->AddLink(mpark::get<ChVehicleJoint::Link>(joint->m_joint));
+void ChChassis::AddJoint(std::shared_ptr<ChJoint> joint) {
+    if (joint->IsKinematic()) {
+        m_body->GetSystem()->AddLink(joint->GetAsLink());
     } else {
-        m_container_bushings->Add(mpark::get<ChVehicleJoint::Bushing>(joint->m_joint));
+        m_container_bushings->Add(joint->GetAsBushing());
     }
 }
 
-void ChChassis::RemoveJoint(std::shared_ptr<ChVehicleJoint> joint) {
-    if (joint->m_joint.index() == 0) {
-        ChVehicleJoint::Link& link = mpark::get<ChVehicleJoint::Link>(joint->m_joint);
+void ChChassis::RemoveJoint(std::shared_ptr<ChJoint> joint) {
+    if (joint->IsKinematic()) {
+        auto link = joint->GetAsLink();
         auto sys = link->GetSystem();
         if (sys) {
             sys->Remove(link);
@@ -321,7 +325,7 @@ void ChChassisRear::Initialize(std::shared_ptr<ChChassis> chassis, int collision
     Construct(chassis, collision_family);
 
     // Mark as initialized
-    m_initialized = true;
+    ChPart::Initialize();
 }
 
 // -----------------------------------------------------------------------------
@@ -336,11 +340,6 @@ void ChChassisConnector::InitializeInertiaProperties() {
 }
 
 void ChChassisConnector::UpdateInertiaProperties() {}
-
-void ChChassisConnector::Initialize(std::shared_ptr<ChChassis> front, std::shared_ptr<ChChassisRear> rear) {
-    // Mark as initialized
-    m_initialized = true;
-}
 
 }  // end namespace vehicle
 }  // end namespace chrono

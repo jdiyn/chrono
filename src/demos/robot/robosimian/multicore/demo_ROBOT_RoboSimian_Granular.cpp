@@ -23,7 +23,7 @@
 
 #include "chrono/utils/ChUtilsCreators.h"
 #include "chrono/utils/ChUtilsGenerators.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
+#include "chrono/input_output/ChUtilsInputOutput.h"
 
 #include "chrono_multicore/physics/ChSystemMulticore.h"
 
@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
     // Timed events
     // ------------
 
-    double duration_pose = 0.5;            // Interval to assume initial pose
+    double duration_pose = 0.05;           // Interval to assume initial pose
     double duration_settle_terrain = 1.0;  // Interval to allow granular material settling
     double duration_settle_robot = 0.5;    // Interval to allow robot settling on terrain
     double duration_hold = duration_settle_terrain + duration_settle_robot;

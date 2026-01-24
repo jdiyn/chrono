@@ -24,7 +24,7 @@
 #include "chrono/physics/ChContactContainer.h"
 #include "chrono/physics/ChLoadContainer.h"
 #include "chrono/collision/ChCollisionSystem.h"
-#include "chrono/utils/ChUtilsInputOutput.h"
+#include "chrono/input_output/ChWriterCSV.h"
 
 #include "chrono_vehicle/ChSubsysDefs.h"
 #include "chrono_vehicle/ChChassis.h"
@@ -85,12 +85,13 @@ class CH_VEHICLE_API ChTrackContactManager : public ChContactContainer::ReportCo
     virtual bool OnReportContact(const ChVector3d& pA,
                                  const ChVector3d& pB,
                                  const ChMatrix33<>& plane_coord,
-                                 const double& distance,
-                                 const double& eff_radius,
+                                 double distance,
+                                 double eff_radius,
                                  const ChVector3d& react_forces,
                                  const ChVector3d& react_torques,
                                  ChContactable* modA,
-                                 ChContactable* modB) override;
+                                 ChContactable* modB,
+                                 int constraint_offset) override;
 
     bool m_initialized;  ///< true if the contact manager was initialized
     int m_flags;         ///< contact bit flags
@@ -100,7 +101,7 @@ class CH_VEHICLE_API ChTrackContactManager : public ChContactContainer::ReportCo
     bool m_render_forces;   ///< render contact forces
     double m_scale_forces;  ///< contact force rendering scale
 
-    utils::ChWriterCSV m_csv;
+    ChWriterCSV m_csv;
 
     std::shared_ptr<ChChassis> m_chassis;
     std::shared_ptr<ChSprocket> m_sprocket_L;
@@ -208,7 +209,7 @@ class CH_VEHICLE_API ChTrackCustomContact : public ChLoadContainer {
 
   private:
     virtual void Setup() override;
-    virtual void Update(double time, bool update_assets) override;
+    virtual void Update(double time, UpdateFlags update_flags) override;
     void ApplyForces();
 
     ChTrackCollisionManager* m_collision_manager;

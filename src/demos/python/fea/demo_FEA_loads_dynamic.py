@@ -17,7 +17,10 @@ import errno
 import os
 import copy
 
-out_dir = chrono.GetChronoOutputPath() + "FEA_LOADS"  # Output directory
+# Set output root directory
+chrono.SetChronoOutputPath("../DEMO_OUTPUT/")
+
+out_dir = chrono.GetChronoOutputPath() + "FEA_Loads_Dynamic/"
 
 print("Copyright (c) 2017 projectchrono.org ")
 
@@ -30,6 +33,7 @@ except OSError as exc:
 
 # Create the physical system
 sys = chrono.ChSystemSMC()
+sys.SetGravityY()
 
 # Create a mesh
 mesh = fea.ChMesh()
@@ -159,7 +163,7 @@ vis.AttachSystem(sys)
 vis.SetWindowSize(1024,768)
 vis.SetWindowTitle('Loads on beams')
 vis.Initialize()
-vis.AddLogo(chrono.GetChronoDataFile('logo_pychrono_alpha.png'))
+vis.AddLogo(chrono.GetChronoDataFile('logo_chrono_alpha.png'))
 vis.AddSkyBox()
 vis.AddCamera(chrono.ChVector3d(0.5, 0.0, -3.0), chrono.ChVector3d(0.5, 0.0, 0.0))
 vis.AddTypicalLights()

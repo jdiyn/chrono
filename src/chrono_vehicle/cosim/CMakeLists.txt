@@ -66,16 +66,16 @@ if(CH_ENABLE_MODULE_MULTICORE)
       terrain/ChVehicleCosimTerrainNodeGranularOMP.cpp)
 endif()
 
-if(CH_ENABLE_MODULE_FSI)
+if(CH_ENABLE_MODULE_FSI_SPH)
   set(CV_COSIM_TERRAIN_FILES ${CV_COSIM_TERRAIN_FILES}
       terrain/ChVehicleCosimTerrainNodeGranularSPH.h
       terrain/ChVehicleCosimTerrainNodeGranularSPH.cpp)
 endif()
 
-if(CH_ENABLE_MODULE_GPU)
+if(CH_ENABLE_MODULE_DEM)
   set(CV_COSIM_TERRAIN_FILES ${CV_COSIM_TERRAIN_FILES}
-      terrain/ChVehicleCosimTerrainNodeGranularGPU.h
-      terrain/ChVehicleCosimTerrainNodeGranularGPU.cpp)
+      terrain/ChVehicleCosimTerrainNodeGranularDEM.h
+      terrain/ChVehicleCosimTerrainNodeGranularDEM.cpp)
 endif()
 
 # ------------------------------------------------------------------------------
@@ -104,11 +104,12 @@ endif()
 if(CH_ENABLE_MODULE_MULTICORE)
   list (APPEND DEPENDENCIES_VEHICLECOSIM "MULTICORE")
 endif()
-if(CH_ENABLE_MODULE_FSI)
+if(CH_ENABLE_MODULE_FSI_SPH)
   list (APPEND DEPENDENCIES_VEHICLECOSIM "FSI")
+  list (APPEND DEPENDENCIES_VEHICLECOSIM "FSI_SPH")
 endif()
-if(CH_ENABLE_MODULE_GPU)
-  list (APPEND DEPENDENCIES_VEHICLECOSIM "GPU")
+if(CH_ENABLE_MODULE_DEM)
+  list (APPEND DEPENDENCIES_VEHICLECOSIM "DEM")
 endif()
 
 if(CH_ENABLE_MODULE_POSTPROCESS)
@@ -130,6 +131,8 @@ add_library(Chrono_vehicle_cosim
     ${CV_COSIM_TERRAIN_FILES}
 )
 add_library(Chrono::vehicle_cosim ALIAS Chrono_vehicle_cosim)
+
+set_target_properties(Chrono_vehicle_cosim PROPERTIES DEBUG_POSTFIX ${CH_DEBUG_POSTFIX})
 
 if(CH_WHOLE_PROG_OPT)
   set_target_properties(Chrono_vehicle_cosim PROPERTIES COMPILE_FLAGS "/GL")
@@ -154,11 +157,12 @@ target_link_libraries(Chrono_vehicle_cosim PUBLIC MPI::MPI_CXX)
 if(CH_ENABLE_MODULE_MULTICORE)
   target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_multicore)
 endif()
-if(CH_ENABLE_MODULE_FSI)
+if(CH_ENABLE_MODULE_FSI_SPH)
+  target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_fsi)
   target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_fsisph)
 endif()
-if(CH_ENABLE_MODULE_GPU)
-  target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_gpu)
+if(CH_ENABLE_MODULE_DEM)
+  target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_dem)
 endif()
 
 if(CH_ENABLE_MODULE_PARDISO_MKL)
@@ -178,7 +182,7 @@ endif()
 if(CH_ENABLE_MODULE_VSG)
   target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_vsg)
   target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_vehicle_vsg)
-  if(CH_ENABLE_MODULE_FSI)
+  if(CH_ENABLE_MODULE_FSI_SPH)
     target_link_libraries(Chrono_vehicle_cosim PUBLIC Chrono_fsisph_vsg)
   endif()
 endif()

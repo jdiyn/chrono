@@ -19,6 +19,8 @@ import pychrono as chrono
 
 # Create a physical system,
 my_system = chrono.ChSystemNSC()
+my_system.SetGravityY()
+my_system.SetCollisionSystemType(chrono.ChCollisionSystem.Type_BULLET)
 
 # Create a contact material, shared by all collision shapes
 material = chrono.ChContactMaterialNSC()
@@ -51,12 +53,11 @@ bodyB.AddMarker(markerB)
 my_system.Add(bodyA)
 my_system.Add(bodyB)
 
-
 # Report Contact callback
 class MyReportContactCallback(chrono.ReportContactCallback):
     def __init__(self):
          chrono.ReportContactCallback.__init__(self)
-    def OnReportContact(self,vA,vB,cA,dist,rad,force,torque,modA,modB):
+    def OnReportContact(self,vA,vB,cA,dist,rad,force,torque,modA,modB,cnstr_offset):
          bodyUpA = chrono.CastContactableToChBody(modA)
          nameA = bodyUpA.GetName()
          bodyUpB = chrono.CastContactableToChBody(modB)
