@@ -24,7 +24,7 @@
 
 #include "chrono/utils/ChOpenMP.h"
 
-#include "chrono_vehicle/ChVehicleModelData.h"
+#include "chrono_vehicle/ChVehicleDataPath.h"
 #include "chrono_vehicle/driver/ChInteractiveDriver.h"
 #include "chrono_vehicle/terrain/RigidTerrain.h"
 #include "chrono_vehicle/terrain/SCMTerrain.h"
@@ -132,10 +132,10 @@ int main(int argc, char* argv[]) {
     // ----------------------
 
     // Height-map image files
-    auto hm_concave = high_res ? vehicle::GetDataFile("terrain/height_maps/concave200.bmp")
-                               : vehicle::GetDataFile("terrain/height_maps/concave64.bmp");
-    auto hm_convex = high_res ? vehicle::GetDataFile("terrain/height_maps/convex200.bmp")
-                              : vehicle::GetDataFile("terrain/height_maps/convex64.bmp");
+    auto hm_concave = high_res ? vehicle::GetVehicleDataFile("terrain/height_maps/concave200.bmp")
+                               : vehicle::GetVehicleDataFile("terrain/height_maps/concave64.bmp");
+    auto hm_convex = high_res ? vehicle::GetVehicleDataFile("terrain/height_maps/convex200.bmp")
+                              : vehicle::GetVehicleDataFile("terrain/height_maps/convex64.bmp");
 
     // Create rigid terrain contact material consistent with the current contact formulation
     ChContactMaterialData mat_data;
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     {
         // x: [-20 ... 0]
         auto patch = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(-10, 0, 0), QUNIT), 20, 10);
-        patch->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 10, 5);
+        patch->SetTexture(vehicle::GetVehicleDataFile("terrain/textures/concrete.jpg"), 10, 5);
     }
     //if (patches[0] == PatchType::RIGID) {
     //    // x: [0 ... 10]
@@ -164,7 +164,7 @@ int main(int argc, char* argv[]) {
     {
         // x: [20 ... 40]
         auto patch = rigid_terrain.AddPatch(mat, ChCoordsys<>(ChVector3d(30, 0, 0), QUNIT), 20, 10);
-        patch->SetTexture(vehicle::GetDataFile("terrain/textures/concrete.jpg"), 10, 5);
+        patch->SetTexture(vehicle::GetVehicleDataFile("terrain/textures/concrete.jpg"), 10, 5);
     }
 
     rigid_terrain.Initialize();
@@ -192,7 +192,7 @@ int main(int argc, char* argv[]) {
 
         scm0.GetMesh()->SetWireframe(render_wireframe);
         if (apply_texture)
-            scm0.GetMesh()->SetTexture(vehicle::GetDataFile("terrain/textures/dirt.jpg"), 10, 10);
+            scm0.GetMesh()->SetTexture(vehicle::GetVehicleDataFile("terrain/textures/dirt.jpg"), 10, 10);
         if (render_sinkage)
             scm0.SetPlotType(vehicle::SCMTerrain::PLOT_SINKAGE, 0, 0.1);
     }
@@ -209,7 +209,7 @@ int main(int argc, char* argv[]) {
 
         scm1.GetMesh()->SetWireframe(render_wireframe);
         if (apply_texture)
-            scm1.GetMesh()->SetTexture(vehicle::GetDataFile("terrain/textures/dirt.jpg"), 10, 10);
+            scm1.GetMesh()->SetTexture(vehicle::GetVehicleDataFile("terrain/textures/dirt.jpg"), 10, 10);
         if (render_sinkage)
             scm1.SetPlotType(vehicle::SCMTerrain::PLOT_SINKAGE, 0, 0.1);
     }

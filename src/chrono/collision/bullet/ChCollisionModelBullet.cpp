@@ -398,9 +398,25 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     // if someone wants to use the standard algo processalltriangles path
     bt_hf->setUseDiamondSubdivision(true);
 
-    // put it into world scale units! Important: do not double scale down the line!!!!!
-    bt_hf->setLocalScaling(cbtVector3(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1),
-                                      hf->GetFieldLength() / (hf->GetLengthSamples() - 1), hf->GetHeightScale()));
+    // Put it into world scale units.
+    // NOTE: this Chrono terrain shape already applies hf->GetHeightScale() internally when evaluating heights.
+    // Therefore, the height axis scaling must remain 1 here (otherwise height gets scaled twice).
+    const cbtScalar scaleU = (cbtScalar)(hf->GetFieldWidth() / (hf->GetWidthSamples() - 1));
+    const cbtScalar scaleV = (cbtScalar)(hf->GetFieldLength() / (hf->GetLengthSamples() - 1));
+    const int upAxis = hf->GetUpAxis();
+    cbtVector3 localScaling(1, 1, 1);
+    switch (upAxis) {
+        case 0:  // X-up: u->Y, v->Z
+            localScaling.setValue(1, scaleU, scaleV);
+            break;
+        case 1:  // Y-up: u->X, v->Z
+            localScaling.setValue(scaleU, 1, scaleV);
+            break;
+        default:  // Z-up: u->X, v->Y
+            localScaling.setValue(scaleU, scaleV, 1);
+            break;
+    }
+    bt_hf->setLocalScaling(localScaling);
 
     // apply margin in one go
     cbtScalar full_margin = GetSuggestedFullMargin();

@@ -140,10 +140,15 @@ bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
     const double h01 = H(i, j + 1);
     const double h11 = H(i + 1, j + 1);
 
-    // Bilinear interpolation for height (raw height)
+    // Bilinear interpolation for height (absolute height)
     const double h0 = h00 + tx * (h10 - h00);
     const double h1 = h01 + tx * (h11 - h01);
     const double h = h0 + ty * (h1 - h0);
+
+    // The heightfield patch uses a BASE-at-origin convention:
+    // local z=0 corresponds to the minimum height of the heightfield, 
+    // therefore the surface point returned here must be relative to BASE
+    const double h_rel = h - (m_minHeight * m_heightScale);
 
     // Gradients for normal (central differences, scaled by cell size)
     const double dhdu = (h10 - h00 + h11 - h01) * 0.5 * m_invCellSizeU;
@@ -181,17 +186,17 @@ bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
         n_local.Normalize();
     }
 
-    // Construct local surface point (using raw height h, no centering needed here)
+    // Construct local surface point (height relative to BASE)
     ChVector3d surf_local(0.0, 0.0, 0.0);
     switch (m_upAxis) {
         case 0:
-            surf_local.Set(h, u, v);
+            surf_local.Set(h_rel, u, v);
             break;
         case 1:
-            surf_local.Set(u, h, v);
+            surf_local.Set(u, h_rel, v);
             break;
         default:
-            surf_local.Set(u, v, h);
+            surf_local.Set(u, v, h_rel);
             break;
     }
 

@@ -30,8 +30,8 @@
 #include <random>
 #include <algorithm>
 
-#include "chrono/utils/ChUtilsInputOutput.h"
-#include "chrono_vehicle/ChVehicleModelData.h"
+#include "chrono/input_output/ChUtilsInputOutput.h"
+#include "chrono_vehicle/ChVehicleDataPath.h"
 #include "chrono_vehicle/driver/ChInteractiveDriver.h"
 #include "chrono_vehicle/terrain/RigidTerrain.h"
 #include "chrono_models/vehicle/hmmwv/HMMWV.h"
@@ -238,9 +238,7 @@ int main(int argc, char* argv[]) {
     v->AddLogo();
     v->AttachVehicle(&hmmwv.GetVehicle());
     v->AttachDriver(&driver);
-#endif
-
-#ifdef CHRONO_VSG
+#elif CHRONO_VSG
     ChVisualSystem::Type vis_type = ChVisualSystem::Type::VSG;
     auto v = chrono_types::make_shared<ChVehicleVisualSystemVSG>();
     v->SetWindowTitle("Streaming Terrain Demo");
@@ -251,7 +249,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     vis = v;
-    hmmwv.GetVehicle().EnableRealtime(true);
+    hmmwv.GetVehicle().EnableRealtime(false);
     ///////////////////////////////////////////////////
 
     // Sim loop

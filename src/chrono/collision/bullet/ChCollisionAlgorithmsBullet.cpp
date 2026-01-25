@@ -1730,7 +1730,7 @@ void cbtConvexHeightfieldAlgorithm::collectSupportPoints(const cbtConvexShape* s
         return;
     }
     {
-        // fallback – 26 direction GJK support map sample for other shapes
+        // fallback - 26 direction GJK support map sample for other shapes
         static const cbtVector3 dir[26] = {{1, 0, 0},   {-1, 0, 0},  {0, 1, 0},  {0, -1, 0},  {0, 0, 1},  {0, 0, -1},
                                            {1, 1, 0},   {-1, 1, 0},  {1, -1, 0}, {-1, -1, 0}, {1, 0, 1},  {-1, 0, 1},
                                            {1, 0, -1},  {-1, 0, -1}, {0, 1, 1},  {0, -1, 1},  {0, 1, -1}, {0, -1, -1},
@@ -2134,7 +2134,8 @@ cbtScalar cbtConvexHeightfieldAlgorithm::calculateTimeOfImpact(cbtCollisionObjec
 
 
 // ---------------------------------------------------------------------------
-// Heightfield collision algorithm
+// Heightfield collision algorithm - SPHERE SPECIAL HANDLING - since spheres can be cheaper
+// ---------------------------------------------------------------------------
 cbtCollisionAlgorithm* cbtSphereHeightfieldAlgorithm::CreateFunc::CreateCollisionAlgorithm(
     cbtCollisionAlgorithmConstructionInfo& ci,
     const cbtCollisionObjectWrapper* a,
@@ -2173,509 +2174,206 @@ cbtSphereHeightfieldAlgorithm::~cbtSphereHeightfieldAlgorithm() {
 
 
 // ============================================================================
-// ADAPTIVE SPHERE-HEIGHTFIELD WITH TERRAIN VARIATION CHECK
-// ======================================================
-// 
-// TODO:- this is messy, complicated and is not efficient in usage of data handling and physcis processing.
+// SPHERE-HEIGHTFIELD (CLOSEST-POINT LOCAL TRIANGLES)
+// ==================================================
+// This computes a true closest point between the sphere center and the local heightfield triangles (small neighborhood). 
+// Avoids expensive multi-sample probing and is relatively robust on steep slopes
+
 
 void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWrapper* wrapperA,
                                                      const cbtCollisionObjectWrapper* wrapperB,
                                                      const cbtDispatcherInfo& /*info*/,
                                                      cbtManifoldResult* resultOut) {
+    // the job here is to find an actual contact point + normal + penetration depth
     if (!m_manifoldPtr)
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
 
+    // Figure out which wrapper is the sphere and which is the terrain
     const bool sphereIsA = (wrapperA->getCollisionShape() == m_convex);
     const auto* sphereWrap = sphereIsA ? wrapperA : wrapperB;
     const auto* terrainWrap = sphereIsA ? wrapperB : wrapperA;
 
+    // get world transforms
     const cbtTransform& sphereTransform = sphereWrap->getWorldTransform();
     const cbtTransform& terrainTransform = terrainWrap->getWorldTransform();
     const auto* terrainShape = static_cast<const cbtHeightfieldChronoTerrainShape*>(terrainWrap->getCollisionShape());
     if (!terrainShape)
         return;
 
+    // Provide a slop tolerance to avoid jitter / creation and deletion of contacts constantly
     const cbtScalar contactSlop = m_manifoldPtr->getContactBreakingThreshold() * cbtScalar(0.5);
     const auto* sphereShape = static_cast<const cbtSphereShape*>(m_convex);
     const cbtScalar radius = sphereShape->getRadius();
     const cbtScalar terrainMargin = terrainShape->getMargin();
-    const cbtVector3 sphereCenter = sphereTransform.getOrigin();
+
+    const cbtVector3 sphereCenterWorld = sphereTransform.getOrigin();
+
+    // Transform the sphere center into terrain-local space so further work is done in the terrain's own coordinates
+    const cbtTransform invTerrain = terrainTransform.inverse();
+    const cbtVector3 sphereCenterLocal = invTerrain * sphereCenterWorld;
+
+    // The heightfield internally may have local scaling over the grid, but to find which cell we're over, we want the unscaled grid coordinates
+    const cbtVector3 invS = terrainShape->getInverseLocalScaling();
+    const cbtVector3 sphereCenterLocalUnscaled = sphereCenterLocal * invS;
+
+    const int W = terrainShape->getWidth();
+    const int L = terrainShape->getLength();
+    if (W < 2 || L < 2)
+        return;
 
     const int upAxis = terrainShape->getUpAxis();
-    cbtVector3 worldUp(0, 0, 0);
-    worldUp[upAxis] = 1.0f;
-    cbtVector3 terrainWorldUp = terrainTransform.getBasis() * worldUp;
-    terrainWorldUp.normalize();
+    int axisU = 0;
+    int axisV = 1;
+    terrainShape->getPlanarAxes(axisU, axisV);
 
-    // ============================================================================
-    // STEP 1: Sample terrain at sphere center + check local variation
-    // ============================================================================
+    // The grid is centered at (0,0) in the two axes orthogonal to upAxis
+    // e.g. for Z-up: planar axes are X and Y, and the grid goes from
+    //   X in [-halfW, +halfW] and Y in [-halfL, +halfL]
+    // Grid indices are then just "position + halfExtent" for easier access
+    const cbtScalar halfW = cbtScalar(W - 1) * cbtScalar(0.5);
+    const cbtScalar halfL = cbtScalar(L - 1) * cbtScalar(0.5);
+    const cbtScalar u = sphereCenterLocalUnscaled[axisU];
+    const cbtScalar v = sphereCenterLocalUnscaled[axisV];
+    const cbtScalar gridX = u + halfW;
+    const cbtScalar gridZ = v + halfL;
 
-    cbtVector3 primaryTerrainPt, primaryNormal;
-    if (!terrainShape->sampleWorld(terrainTransform, sphereCenter, primaryTerrainPt, primaryNormal))
+    // Early out!! If the sphere center is far outside the terrain's XY footprint there is no chance of contact
+    // Includes tolerance based on radius so spheres near the edge still contact
+    const cbtVector3 localScaling = terrainShape->getLocalScaling();
+    const cbtScalar cellU = cbtFabs(localScaling[axisU]);
+    const cbtScalar cellV = cbtFabs(localScaling[axisV]);
+    const cbtScalar planarSlackU = (cellU > SIMD_EPSILON) ? (radius / cellU + cbtScalar(2)) : cbtScalar(2);
+    const cbtScalar planarSlackV = (cellV > SIMD_EPSILON) ? (radius / cellV + cbtScalar(2)) : cbtScalar(2);
+    if (gridX < -planarSlackU || gridX > cbtScalar(W - 1) + planarSlackU || gridZ < -planarSlackV ||
+        gridZ > cbtScalar(L - 1) + planarSlackV)
         return;
 
-    if (primaryNormal.length2() < SIMD_EPSILON)
+    // "cx,cz" is the grid cell (quad) under the sphere center - i.e. area of interest for collision
+    int cx = (int)std::floor((double)gridX);
+    int cz = (int)std::floor((double)gridZ);
+    cx = cbtMax(0, cbtMin(cx, W - 2));
+    cz = cbtMax(0, cbtMin(cz, L - 2));
+
+    // Determine how many cells we need to inspect
+    // If the sphere radius is small (about the size of one cell), we only need a few nearby cells
+    // If the sphere is larger, we inspect more.
+    const cbtScalar safeCellU = (cellU > SIMD_EPSILON) ? cellU : cbtScalar(1);
+    const cbtScalar safeCellV = (cellV > SIMD_EPSILON) ? cellV : cbtScalar(1);
+    const int rU = (int)std::ceil((double)(radius / safeCellU)) + 1;
+    const int rV = (int)std::ceil((double)(radius / safeCellV)) + 1;
+
+    cbtVector3 bestPointLocal(0, 0, 0);
+    cbtVector3 bestDeltaLocal(0, 0, 0);
+    cbtVector3 bestTriNormalLocal(0, 0, 0);
+    cbtScalar bestDist2 = SIMD_INFINITY;
+
+    // Cutoff distance: anything further than this cannot possibly be a contact-> sphere radius + terrain margin + small tolerance
+    const cbtScalar cutoff = radius + terrainMargin + contactSlop;
+    const cbtScalar cutoff2 = cutoff * cutoff;
+
+    // Search a local neighborhood of quads, test both triangles and compute the closest point on the triangle
+    // to the sphere center. Then keep the best (smallest distance)
+    const auto& vcache = terrainShape->getVertexCache();
+    if ((int)vcache.size() < W * L)
         return;
 
-    primaryNormal.normalize();
+    // Cheap prune: each quad has a cached min/max height (along up-axis) <- if dynamic heightfield, this may will need updating.
+    // If the sphere center is way above or below that range (with cutoff) then neither triangle in that quad can be the closest contact
+    const cbtScalar sphereUp = sphereCenterLocal[upAxis];
+    for (int z = cbtMax(0, cz - rV); z <= cbtMin(L - 2, cz + rV); ++z) {
+        for (int x = cbtMax(0, cx - rU); x <= cbtMin(W - 2, cx + rU); ++x) {
+            cbtScalar quadMinH, quadMaxH;
+            if (terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH)) {
+                if (sphereUp > quadMaxH + cutoff || sphereUp < quadMinH - cutoff)
+                    continue;
+            }
 
-    cbtVector3 centerToTerrain = primaryTerrainPt - sphereCenter;
-    cbtScalar centerDist = centerToTerrain.length();
+            cbtVector3 v00, v10, v01, v11;
+            v00 = vcache[static_cast<std::size_t>(z) * W + x];
+            v10 = vcache[static_cast<std::size_t>(z) * W + (x + 1)];
+            v01 = vcache[static_cast<std::size_t>(z + 1) * W + x];
+            v11 = vcache[static_cast<std::size_t>(z + 1) * W + (x + 1)];
 
-    if (centerDist > radius + terrainMargin + contactSlop)
+            const bool alt = terrainShape->useAlternateDiagonal(x, z);
+
+            auto testTri = [&](const cbtVector3& a, const cbtVector3& b, const cbtVector3& c) {
+                // Closest point on this triangle to the sphere center
+                // This is the key difference vs. sampling multiple points on the terrain surface
+                const cbtVector3 q =
+                    cbtHeightfieldChronoTerrainShape::ClosestPointOnTriangle(sphereCenterLocal, a, b, c);
+                const cbtVector3 d = sphereCenterLocal - q;
+                const cbtScalar d2 = d.length2();
+                if (d2 < bestDist2) {
+                    bestDist2 = d2;
+                    bestPointLocal = q;
+                    bestDeltaLocal = d;
+
+                    // Also store the triangle normal as a backup if we need it later
+                    // (If d2 is ~0, we can't build a normal from d safely)
+                    cbtVector3 n = (b - a).cross(c - a);
+                    if (n.length2() > SIMD_EPSILON) {
+                        n.normalize();
+                        bestTriNormalLocal = n;
+                    } else {
+                        bestTriNormalLocal.setValue(0, 0, 0);
+                        bestTriNormalLocal[upAxis] = cbtScalar(1);
+                    }
+                }
+            };
+
+            if (alt) {
+                testTri(v00, v10, v11);
+                testTri(v00, v11, v01);
+            } else {
+                testTri(v00, v10, v01);
+                testTri(v10, v11, v01);
+            }
+        }
+    }
+
+    if (bestDist2 == SIMD_INFINITY)
         return;
 
-    cbtVector3 primaryContactDir;
-    if (centerDist > SIMD_EPSILON) {
-        primaryContactDir = centerToTerrain / centerDist;
+    // If we never found anything, there is no contact
+    cbtVector3 normalLocal(0, 0, 0);
+    if (bestDist2 > SIMD_EPSILON) {
+        // Normal points from terrain surface toward the sphere center
+        normalLocal = bestDeltaLocal / cbtSqrt(bestDist2);
     } else {
-        primaryContactDir = -primaryNormal;
+        // Sphere center is basically on the surface. In this case bestDeltaLocal is ~zero, so we use the triangle normal instead
+        normalLocal = bestTriNormalLocal;
     }
 
-    // ============================================================================
-    // STEP 2: ADAPTIVE SAMPLING - Check terrain variation in AABB
-    // Sample 5 points (center + 4 cardinal) to estimate terrain complexity
-    // ============================================================================
+    cbtVector3 normalWorld = terrainTransform.getBasis() * normalLocal;
+    if (normalWorld.length2() < SIMD_EPSILON)
+        return;
+    normalWorld.normalize();
 
-    struct TerrainVariationSample {
-        cbtVector3 point;
-        cbtVector3 normal;
-        cbtScalar height;
-        bool valid;
-    };
+    const cbtVector3 pointOnTerrainWorld = terrainTransform * bestPointLocal;
+    const cbtVector3 pointOnSphereWorld = sphereCenterWorld - normalWorld * radius;
 
-    TerrainVariationSample variationSamples[5];
-    int validVariationSamples = 0;
-
-    // Center
-    variationSamples[0].point = primaryTerrainPt;
-    variationSamples[0].normal = primaryNormal;
-    variationSamples[0].height = primaryTerrainPt[upAxis];
-    variationSamples[0].valid = true;
-    validVariationSamples++;
-
-    // Create basis for cardinal sampling
-    cbtVector3 basisX = (cbtFabs(primaryContactDir.x()) < 0.9f)
-                            ? cbtVector3(1, 0, 0).cross(primaryContactDir).normalized()
-                            : cbtVector3(0, 1, 0).cross(primaryContactDir).normalized();
-    cbtVector3 basisY = primaryContactDir.cross(basisX).normalized();
-
-    // Sample at 70% radius in 4 cardinal directions
-    const cbtScalar sampleDist = radius * cbtScalar(0.7);
-    cbtVector3 cardinalOffsets[4] = {basisX * sampleDist, -basisX * sampleDist, basisY * sampleDist,
-                                     -basisY * sampleDist};
-
-    for (int i = 0; i < 4; ++i) {
-        cbtVector3 sampleQuery = sphereCenter + primaryContactDir * radius + cardinalOffsets[i];
-        cbtVector3 terrainPt, terrainNormal;
-
-        if (terrainShape->sampleWorld(terrainTransform, sampleQuery, terrainPt, terrainNormal)) {
-            if (terrainNormal.length2() >= SIMD_EPSILON) {
-                terrainNormal.normalize();
-                variationSamples[1 + i].point = terrainPt;
-                variationSamples[1 + i].normal = terrainNormal;
-                variationSamples[1 + i].height = terrainPt[upAxis];
-                variationSamples[1 + i].valid = true;
-                validVariationSamples++;
-            }
-        }
-    }
-
-    // Calculate terrain variation metrics
-    cbtScalar minHeight = variationSamples[0].height;
-    cbtScalar maxHeight = variationSamples[0].height;
-    cbtScalar avgNormalDot = 0.0f;
-    int normalComparisons = 0;
-
-    for (int i = 0; i < 5; ++i) {
-        if (!variationSamples[i].valid)
-            continue;
-
-        minHeight = cbtMin(minHeight, variationSamples[i].height);
-        maxHeight = cbtMax(maxHeight, variationSamples[i].height);
-
-        for (int j = i + 1; j < 5; ++j) {
-            if (!variationSamples[j].valid)
-                continue;
-            avgNormalDot += variationSamples[i].normal.dot(variationSamples[j].normal);
-            normalComparisons++;
-        }
-    }
-
-    if (normalComparisons > 0)
-        avgNormalDot /= normalComparisons;
-
-    // Terrain variation score (0 = flat, 1+ = complex)
-    cbtScalar heightVariation = (maxHeight - minHeight) / (radius * cbtScalar(0.01));  // Normalized by 1% of radius
-    cbtScalar normalVariation = cbtScalar(1.0) - avgNormalDot;                // 0 = identical normals, 1 = opposite
-    cbtScalar terrainComplexity = heightVariation + normalVariation * 10.0f;  // Weight normals higher
-
-    // Decide sample count based on complexity
-    int numSamples;
-    if (terrainComplexity < 0.5f) {
-        numSamples = 9;  // Very flat: minimal sampling
-    } else if (terrainComplexity < 2.0f) {
-        numSamples = 25;  // Moderate: medium sampling
-    } else if (terrainComplexity < 5.0f) {
-        numSamples = 37;  // Complex: high sampling
-    } else {
-        numSamples = 49;  // Very complex: maximum sampling
-    }
-
-    // ============================================================================
-    // STEP 3: Generate contact candidates with adaptive sample count
-    // ============================================================================
-
-    struct ContactCandidate {
-        cbtVector3 spherePoint;
-        cbtVector3 terrainPoint;
-        cbtVector3 normal;
-        cbtScalar penetration;
-    };
-
-    const int MAX_CANDIDATES = 49;
-    ContactCandidate candidates[MAX_CANDIDATES];
-    int candidateCount = 0;
-
-    // Create hemisphere basis
-    cbtVector3 basisZ = primaryContactDir;
-    basisX = (cbtFabs(basisZ.x()) < 0.9f) ? cbtVector3(1, 0, 0).cross(basisZ).normalized()
-                                          : cbtVector3(0, 1, 0).cross(basisZ).normalized();
-    basisY = basisZ.cross(basisX).normalized();
-
-    // Fibonacci hemisphere sampling with adaptive count
-    const cbtScalar GOLDEN_ANGLE = cbtScalar(2.39996323f);
-
-    for (int i = 0; i < numSamples && candidateCount < MAX_CANDIDATES; ++i) {
-        cbtScalar phi = GOLDEN_ANGLE * i;
-        cbtScalar z = cbtScalar(i) / cbtScalar(numSamples - 1);
-        cbtScalar r = cbtSqrt(cbtScalar(1.0) - z * z);
-        cbtScalar x = cbtCos(phi) * r;
-        cbtScalar y = cbtSin(phi) * r;
-
-        cbtVector3 localDir(x, y, z);
-        cbtVector3 worldDir = basisX * localDir.x() + basisY * localDir.y() + basisZ * localDir.z();
-        worldDir.normalize();
-
-        cbtVector3 sphereSurfacePt = sphereCenter + worldDir * radius;
-
-        cbtVector3 terrainPt, terrainNormal;
-        if (!terrainShape->sampleWorld(terrainTransform, sphereSurfacePt, terrainPt, terrainNormal)) {
-            continue;
-        }
-
-        if (terrainNormal.length2() < SIMD_EPSILON)
-            continue;
-        terrainNormal.normalize();
-
-        cbtVector3 sphereToTerrain = terrainPt - sphereSurfacePt;
-        cbtScalar signedDistance = sphereToTerrain.dot(terrainNormal);
-        cbtScalar geometricPenetration = -signedDistance;
-        cbtScalar finalPenetration = geometricPenetration + terrainMargin;
-
-        if (finalPenetration < contactSlop) {
-            candidates[candidateCount].spherePoint = sphereSurfacePt;
-            candidates[candidateCount].terrainPoint = terrainPt;
-            candidates[candidateCount].normal = terrainNormal;
-            candidates[candidateCount].penetration = finalPenetration;
-            candidateCount++;
-        }
-    }
-
-    if (candidateCount == 0)
+    // Compute signed separation along the chosen normal
+    // Where positive is separated and negative is penetrating
+    // (sphereCenterWorld - pointOnTerrainWorld).dot(normalWorld)  = distance from terrain point to sphere center
+    // subtract radius and terrainMargin to get separation between surfaces
+    const cbtScalar distAlongNormal = (sphereCenterWorld - pointOnTerrainWorld).dot(normalWorld) - radius - terrainMargin;
+    if (distAlongNormal > contactSlop)
         return;
 
-    // ============================================================================
-    // STEP 4: Contact selection (same as before)
-    // ============================================================================
-
-    const int MAX_CONTACTS = 4;
-
-    for (int i = 0; i < candidateCount - 1; ++i) {
-        for (int j = i + 1; j < candidateCount; ++j) {
-            if (candidates[j].penetration < candidates[i].penetration) {
-                ContactCandidate temp = candidates[i];
-                candidates[i] = candidates[j];
-                candidates[j] = temp;
-            }
-        }
-    }
-
-    int selectedIndices[MAX_CONTACTS];
-    int selectedCount = 0;
-    selectedIndices[selectedCount++] = 0;
-
-    const cbtScalar MIN_SEPARATION = radius * cbtScalar(0.35);
-
-    for (int i = 1; i < candidateCount && selectedCount < MAX_CONTACTS; ++i) {
-        if (candidates[i].penetration > 0.0f)
-            break;
-
-        bool wellSeparated = true;
-        for (int j = 0; j < selectedCount; ++j) {
-            cbtVector3 delta = candidates[i].spherePoint - candidates[selectedIndices[j]].spherePoint;
-            if (delta.length() < MIN_SEPARATION) {
-                wellSeparated = false;
-                break;
-            }
-        }
-
-        if (wellSeparated) {
-            selectedIndices[selectedCount++] = i;
-        }
-    }
-
-    // ============================================================================
-    // STEP 5: Normal smoothing (adaptive radius based on complexity)
-    // ============================================================================
-
-    const cbtScalar SMOOTHING_RADIUS = (terrainComplexity < 1.0f)
-                                           ? radius * cbtScalar(0.4)   // More smoothing on flat terrain
-                                           : radius * cbtScalar(0.2);  // Less smoothing on complex terrain
-
-    for (int i = 0; i < selectedCount; ++i) {
-        int idx = selectedIndices[i];
-        ContactCandidate& contact = candidates[idx];
-
-        cbtVector3 smoothedNormal = contact.normal;
-        cbtScalar totalWeight = 1.0f;
-
-        for (int j = 0; j < candidateCount; ++j) {
-            if (j == idx)
-                continue;
-
-            cbtScalar dist = (candidates[j].spherePoint - contact.spherePoint).length();
-            if (dist < SMOOTHING_RADIUS) {
-                cbtScalar weight = 1.0f - (dist / SMOOTHING_RADIUS);
-                smoothedNormal += candidates[j].normal * weight;
-                totalWeight += weight;
-            }
-        }
-
-        if (totalWeight > SIMD_EPSILON) {
-            smoothedNormal /= totalWeight;
-            if (smoothedNormal.length2() > SIMD_EPSILON) {
-                contact.normal = smoothedNormal.normalized();
-
-                cbtVector3 sphereToTerrain = contact.terrainPoint - contact.spherePoint;
-                cbtScalar signedDistance = sphereToTerrain.dot(contact.normal);
-                contact.penetration = -signedDistance + terrainMargin;
-            }
-        }
-    }
-
-    // ============================================================================
-    // STEP 6: Emit contacts
-    // ============================================================================
-
-    for (int i = 0; i < selectedCount; ++i) {
-        const ContactCandidate& contact = candidates[selectedIndices[i]];
-
-        if (sphereIsA) {
-            resultOut->addContactPoint(contact.normal, contact.terrainPoint, contact.penetration);
-        } else {
-            resultOut->addContactPoint(-contact.normal, contact.spherePoint, contact.penetration);
-        }
+    if (sphereIsA) {
+        // Bullet expects the contact normal to point from B to A
+        // Here A is the sphere and B is the terrain
+        resultOut->addContactPoint(normalWorld, pointOnTerrainWorld, distAlongNormal);
+    } else {
+        // Whereas in this case, A is the terrain and B is the sphere
+        resultOut->addContactPoint(-normalWorld, pointOnSphereWorld, distAlongNormal);
     }
 
     resultOut->refreshContactPoints();
 }
 
-// void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWrapper* wrapperA,
-//                                                     const cbtCollisionObjectWrapper* wrapperB,
-//                                                     const cbtDispatcherInfo& /*info*/,
-//                                                     cbtManifoldResult* resultOut) {
-//    if (!m_manifoldPtr)
-//        return;
-//    resultOut->setPersistentManifold(m_manifoldPtr);
-//
-//    // 1) Identify sphere vs terrain
-//    bool sphereIsA = (wrapperA->getCollisionShape() == m_convex);
-//    const auto* sphereWrap = sphereIsA ? wrapperA : wrapperB;
-//    const auto* terrainWrap = sphereIsA ? wrapperB : wrapperA;
-//    const cbtTransform& sphereTransform = sphereWrap->getWorldTransform();
-//    const cbtTransform& terrainTransform = terrainWrap->getWorldTransform();
-//    auto* terrainShape = static_cast<const cbtHeightfieldChronoTerrainShape*>(terrainWrap->getCollisionShape());
-//    if (!terrainShape)
-//        return;
-//
-//    // 2) Basic parameters
-//    cbtScalar contactSlop = m_manifoldPtr->getContactBreakingThreshold() * 0.5f;
-//    auto* sphereShape = static_cast<const cbtSphereShape*>(m_convex);
-//    cbtScalar radius = sphereShape->getRadius();
-//    cbtVector3 sphereCenter = sphereTransform.getOrigin();
-//
-//    // 3) Determine up axis for terrain
-//    int upAxis = terrainShape->getUpAxis();
-//    cbtVector3 worldUp(0, 0, 0);
-//    worldUp[upAxis] = 1.0f;
-//    cbtVector3 terrainWorldUp = terrainTransform.getBasis() * worldUp;
-//
-//    // 4) Set up structures for contact detection
-//    struct ContactCandidate {
-//        cbtVector3 terrainPoint;   // Point on terrain surface
-//        cbtVector3 terrainNormal;  // Pure terrain normal
-//        cbtScalar penetration;     // Penetration depth (negative when penetrating)
-//    };
-//
-//    // Adaptive sampling based on radius
-//    const int MIN_SAMPLES = 8;
-//    const int MAX_SAMPLES = 32;
-//    const cbtScalar RADIUS_FACTOR = 8.0f;
-//    const int NUM_SAMPLES = cbtMin(MAX_SAMPLES, MIN_SAMPLES + static_cast<int>(radius * RADIUS_FACTOR));
-//
-//    // Normal clustering threshold
-//    const cbtScalar NORMAL_ANGLE_DEG = 10.0f;
-//    const cbtScalar NORMAL_ANGLE_RAD = NORMAL_ANGLE_DEG * (SIMD_PI / 180.0f);
-//    const cbtScalar COS_NORMAL_ANGLE_THRESHOLD = cbtCos(NORMAL_ANGLE_RAD);
-//
-//    // Golden angle for Fibonacci distribution
-//    const cbtScalar GOLDEN_ANGLE = cbtScalar(2.39996323f);
-//
-//    // Create orthogonal basis for hemisphere sampling
-//    cbtVector3 basis1, basis2, downDirection;
-//    downDirection = -terrainWorldUp;  // Point hemisphere downward
-//
-//    // Find perpendicular vectors to downDirection
-//    if (std::abs(downDirection.x()) < 0.57735f) {  // 1/sqrt(3)
-//        basis1 = cbtVector3(1, 0, 0).cross(downDirection);
-//    } else {
-//        basis1 = cbtVector3(0, 1, 0).cross(downDirection);
-//    }
-//    basis1.normalize();
-//    basis2 = downDirection.cross(basis1);
-//
-//    // 5) Sample points on the SPHERE SURFACE using Fibonacci distribution
-//    ContactCandidate samples[MAX_SAMPLES];
-//    int validSamples = 0;
-//
-//    for (int i = 0; i < NUM_SAMPLES && validSamples < MAX_SAMPLES; i++) {
-//        // Fibonacci hemisphere distribution on downward hemisphere
-//        cbtScalar phi = GOLDEN_ANGLE * i;
-//        cbtScalar y = -0.5f * (1.0f + (i / (cbtScalar)(NUM_SAMPLES - 1)));
-//
-//        // Convert to cartesian coordinates
-//        cbtScalar r = cbtSqrt(1.0f - y * y);
-//        cbtScalar x = cbtCos(phi) * r;
-//        cbtScalar z = cbtSin(phi) * r;
-//
-//        // Calculate direction and sample point ON SPHERE SURFACE
-//        cbtVector3 dir = basis1 * x + basis2 * z + downDirection * y;
-//        dir.normalize();
-//        cbtVector3 sphereSurfacePoint = sphereCenter + dir * radius;
-//
-//        // Sample terrain at this sphere surface point
-//        cbtVector3 terrainPoint, terrainNormal;
-//        if (terrainShape->sampleWorld(terrainTransform, sphereSurfacePoint, terrainPoint, terrainNormal)) {
-//            if (terrainNormal.length2() < SIMD_EPSILON)
-//                continue;
-//
-//            terrainNormal.normalize();
-//
-//            // Calculate distance from sphere center to terrain point
-//            cbtVector3 sphereToTerrain = terrainPoint - sphereCenter;
-//            cbtScalar distance = sphereToTerrain.length();
-//            cbtScalar penetration = distance - radius;  // Negative when penetrating
-//
-//            // Only accept samples where terrain normal points toward sphere
-//            if (sphereToTerrain.dot(terrainNormal) < 0.0f) {
-//                samples[validSamples].terrainPoint = terrainPoint;
-//                samples[validSamples].terrainNormal = terrainNormal;
-//                samples[validSamples].penetration = penetration;
-//                validSamples++;
-//            }
-//        }
-//    }
-//
-//    if (validSamples == 0)
-//        return;
-//
-//    // 6) Sort by penetration depth (deepest first)
-//    const int MAX_CONTACTS = 4;
-//    int sortLimit = cbtMin(validSamples, MAX_CONTACTS * 2);
-//
-//    for (int i = 0; i < sortLimit - 1; i++) {
-//        for (int j = i + 1; j < validSamples; j++) {
-//            if (samples[j].penetration < samples[i].penetration) {
-//                ContactCandidate temp = samples[i];
-//                samples[i] = samples[j];
-//                samples[j] = temp;
-//            }
-//        }
-//    }
-//
-//    // Only proceed if we have penetrating contacts
-//    if (samples[0].penetration > -contactSlop) {
-//        return;
-//    }
-//
-//    // 7) Check if terrain is nearly flat
-//    bool isTerrainFlat = true;
-//    cbtVector3 referenceNormal = samples[0].terrainNormal;
-//
-//    for (int i = 1; i < cbtMin(validSamples, sortLimit); i++) {
-//        cbtScalar dotProduct = referenceNormal.dot(samples[i].terrainNormal);
-//        if (dotProduct < COS_NORMAL_ANGLE_THRESHOLD) {
-//            isTerrainFlat = false;
-//            break;
-//        }
-//    }
-//
-//    // 8) Generate final contacts
-//    if (isTerrainFlat) {
-//        // Single contact for flat terrain
-//        if (sphereIsA) {
-//            resultOut->addContactPoint(samples[0].terrainNormal, samples[0].terrainPoint, samples[0].penetration);
-//        } else {
-//            cbtVector3 pointOnSphere = sphereCenter - samples[0].terrainNormal * radius;
-//            resultOut->addContactPoint(-samples[0].terrainNormal, pointOnSphere, samples[0].penetration);
-//        }
-//    } else {
-//        // Multiple contacts for varied terrain
-//        int selectedContacts[MAX_CONTACTS] = {0, -1, -1, -1};
-//        int numSelectedContacts = 1;
-//
-//        // Add diverse contacts based on terrain normal differences
-//        for (int i = 1; i < cbtMin(validSamples, sortLimit) && numSelectedContacts < MAX_CONTACTS; i++) {
-//            if (samples[i].penetration > -contactSlop)
-//                continue;
-//
-//            bool isUnique = true;
-//            for (int j = 0; j < numSelectedContacts; j++) {
-//                cbtScalar dotProduct = samples[i].terrainNormal.dot(samples[selectedContacts[j]].terrainNormal);
-//                if (dotProduct > COS_NORMAL_ANGLE_THRESHOLD) {
-//                    isUnique = false;
-//                    break;
-//                }
-//            }
-//
-//            if (isUnique) {
-//                selectedContacts[numSelectedContacts++] = i;
-//            }
-//        }
-//
-//        // Add contacts to manifold
-//        for (int i = 0; i < numSelectedContacts; i++) {
-//            int idx = selectedContacts[i];
-//            if (sphereIsA) {
-//                resultOut->addContactPoint(samples[idx].terrainNormal, samples[idx].terrainPoint,
-//                                           samples[idx].penetration);
-//            } else {
-//                cbtVector3 pointOnSphere = sphereCenter - samples[idx].terrainNormal * radius;
-//                resultOut->addContactPoint(-samples[idx].terrainNormal, pointOnSphere, samples[idx].penetration);
-//            }
-//        }
-//    }
-//
-//    resultOut->refreshContactPoints();
-//}
-//
-
-
-// TODO- is this handling the sphere correclty if the sphere comes up against a sharp incline? do we sample about the hemispheres?
-
+// CCD support: Calculate time of impact (TOI) for sphere against heightfield
 cbtScalar cbtSphereHeightfieldAlgorithm::calculateTimeOfImpact(cbtCollisionObject* body0,
                                                                cbtCollisionObject* body1,
                                                                const cbtDispatcherInfo& dispatchInfo,

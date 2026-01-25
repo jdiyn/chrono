@@ -213,7 +213,7 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
 
     // initialise member variables
     m_shapeType = TERRAIN_SHAPE_PROXYTYPE;
-    cbtAssert(heightStickWidth > 1 && heightStickLength > 1 && minH <= maxH && up >= 0 && up < 3);
+    cbtAssert(heightStickWidth > 1 && heightStickLength > 1 && minH <= maxH && upAxis >= 0 && upAxis < 3);
 
     m_width = cbtScalar(heightStickWidth - 1);
     m_length = cbtScalar(heightStickLength - 1);
@@ -429,9 +429,12 @@ void cbtHeightfieldChronoTerrainShape::getHeightAndNormalAtGrid(
     // Reuse your existing queryHeightAndGradient, which expects (u,v)
     // in centered‐meters units and returns centered height + raw gradient.
     queryHeightAndGradient(gridU, gridV, outHeight, outNormalLocal);
-    // Then scale the gradient into world by shape‐scaling:
-    outNormalLocal = outNormalLocal * getLocalScaling();
-    outNormalLocal.normalize();
+    // Correct normal under non-uniform scaling: normals transform with inverse-transpose.
+    // For axis-aligned scaling, this is equivalent to component-wise multiply by inverse scale.
+    const cbtVector3 invS = getInverseLocalScaling();
+    outNormalLocal = cbtVector3(outNormalLocal.x() * invS.x(), outNormalLocal.y() * invS.y(), outNormalLocal.z() * invS.z());
+    if (outNormalLocal.length2() > SIMD_EPSILON)
+        outNormalLocal.normalize();
 }
 
 
@@ -606,7 +609,18 @@ void cbtHeightfieldChronoTerrainShape::queryHeightAndGradient(cbtScalar coordU,
             outNormalLocal.setValue(-dhdx, -dhdz, cbtScalar(1));
             break;
     }
-    outNormalLocal.normalize();
+
+    // Robust normalize (avoid NaNs on extreme values)
+    auto finite3 = [](const cbtVector3& v) {
+        return std::isfinite((double)v.x()) && std::isfinite((double)v.y()) && std::isfinite((double)v.z());
+    };
+    if (!finite3(outNormalLocal) || outNormalLocal.length2() < SIMD_EPSILON) {
+        // Fallback to pure up-axis normal
+        outNormalLocal.setValue(0, 0, 0);
+        outNormalLocal[m_upAxis] = cbtScalar(1);
+    } else {
+        outNormalLocal.normalize();
+    }
 }
 
 //  Grid‐raycast machinery in an unnamed namespace
@@ -840,9 +854,6 @@ bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFr
     cbtVector3 gradientLocal;
     queryHeightAndGradient(u, v, terrainHeight_fromBase, gradientLocal);
 
-    if (gradientLocal.length2() < SIMD_EPSILON)
-        return false;
-
     // Build surface point in local space (BASE at origin)
     cbtVector3 surfacePointLocal;
     switch (m_upAxis) {
@@ -863,8 +874,16 @@ bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFr
     // Transform to world
     outSurfacePointWorld = terrainFrame * surfacePointLocal;
 
-    cbtVector3 scaledGradient = gradientLocal * getLocalScaling();
-    outSurfaceNormalWorld = (terrainFrame.getBasis() * scaledGradient).normalized();
+    // Correct normal under non-uniform scaling.
+    // queryHeightAndGradient returns a unit normal in *unscaled* local coordinates.
+    // With axis-aligned scaling S, the normal transforms as n' = normalize(S^{-T} n).
+    const cbtVector3 invS = getInverseLocalScaling();
+    cbtVector3 normalLocalScaled(gradientLocal.x() * invS.x(), gradientLocal.y() * invS.y(), gradientLocal.z() * invS.z());
+    if (normalLocalScaled.length2() < SIMD_EPSILON)
+        return false;
+    normalLocalScaled.normalize();
+    outSurfaceNormalWorld = terrainFrame.getBasis() * normalLocalScaled;
+    outSurfaceNormalWorld.normalize();
 
     return true;
 }

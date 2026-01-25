@@ -26,6 +26,84 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
   public:
     BT_DECLARE_ALIGNED_ALLOCATOR();
 
+    /// Closest point on triangle (Ericson, Real-Time Collision Detection).
+    /// Utility used by Chrono-specific heightfield collision algorithms.
+    static inline cbtVector3 ClosestPointOnTriangle(const cbtVector3& p,
+                                                    const cbtVector3& a,
+                                                    const cbtVector3& b,
+                                                    const cbtVector3& c) {
+        const cbtVector3 ab = b - a;
+        const cbtVector3 ac = c - a;
+        const cbtVector3 ap = p - a;
+
+        const cbtScalar d1 = ab.dot(ap);
+        const cbtScalar d2 = ac.dot(ap);
+        if (d1 <= cbtScalar(0) && d2 <= cbtScalar(0))
+            return a;  // barycentric (1,0,0)
+
+        const cbtVector3 bp = p - b;
+        const cbtScalar d3 = ab.dot(bp);
+        const cbtScalar d4 = ac.dot(bp);
+        if (d3 >= cbtScalar(0) && d4 <= d3)
+            return b;  // barycentric (0,1,0)
+
+        const cbtScalar vc = d1 * d4 - d3 * d2;
+        if (vc <= cbtScalar(0) && d1 >= cbtScalar(0) && d3 <= cbtScalar(0)) {
+            const cbtScalar v = d1 / (d1 - d3);
+            return a + ab * v;  // barycentric (1-v, v, 0)
+        }
+
+        const cbtVector3 cp = p - c;
+        const cbtScalar d5 = ab.dot(cp);
+        const cbtScalar d6 = ac.dot(cp);
+        if (d6 >= cbtScalar(0) && d5 <= d6)
+            return c;  // barycentric (0,0,1)
+
+        const cbtScalar vb = d5 * d2 - d1 * d6;
+        if (vb <= cbtScalar(0) && d2 >= cbtScalar(0) && d6 <= cbtScalar(0)) {
+            const cbtScalar w = d2 / (d2 - d6);
+            return a + ac * w;  // barycentric (1-w, 0, w)
+        }
+
+        const cbtScalar va = d3 * d6 - d5 * d4;
+        if (va <= cbtScalar(0) && (d4 - d3) >= cbtScalar(0) && (d5 - d6) >= cbtScalar(0)) {
+            const cbtScalar w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+            return b + (c - b) * w;  // barycentric (0, 1-w, w)
+        }
+
+        // Inside face region. Compute projection onto triangle plane.
+        const cbtScalar denom = (va + vb + vc);
+        const cbtScalar v = (vb / denom);
+        const cbtScalar w = (vc / denom);
+        return a + ab * v + ac * w;
+    }
+
+    /// Return planar axis indices (u,v) for a given upAxis.
+    /// - upAxis=0 (X-up): u=Y, v=Z
+    /// - upAxis=1 (Y-up): u=X, v=Z
+    /// - upAxis=2 (Z-up): u=X, v=Y
+    static inline void GetPlanarAxesForUpAxis(int upAxis, int& axisU, int& axisV) {
+        switch (upAxis) {
+            case 0:
+                axisU = 1;
+                axisV = 2;
+                break;
+            case 1:
+                axisU = 0;
+                axisV = 2;
+                break;
+            default:
+                axisU = 0;
+                axisV = 1;
+                break;
+        }
+    }
+
+    /// Return planar axis indices (u,v) for this heightfield.
+    inline void getPlanarAxes(int& axisU, int& axisV) const {
+        GetPlanarAxesForUpAxis(m_upAxis, axisU, axisV);
+    }
+
     /// Simple min/max range used by the chunked accelerator
     struct Range {
         cbtScalar min, max;
@@ -65,6 +143,13 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         m_useZigzagSubdivision = z;
     }
 
+    /// Return whether this quad (x,z) uses the alternate diagonal.
+    /// This matches the logic used in processAllTriangles.
+    inline bool useAlternateDiagonal(int x, int z) const {
+        return m_flipQuadEdges || (m_useDiamondSubdivision && (((x + z) & 1) != 0)) ||
+               (m_useZigzagSubdivision && ((z & 1) != 0));
+    }
+
     // hook into the bullet local scaling to ensure cache is rebuilt
     void setLocalScaling(const cbtVector3& scaling) override;
     const cbtVector3& getLocalScaling() const override {
@@ -97,6 +182,22 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // Get the vertex cache (for raycasting etc.)
     const std::vector<cbtVector3>& getVertexCache() const {
         return m_vertexCache;
+    }
+
+    /// Get cached quad height range (scaled height units, i.e., includes heightScale and up-axis localScaling).
+    /// Returns false if (x,z) is out of valid quad range.
+    inline bool getQuadHeightRangeScaled(int x, int z, cbtScalar& outMinH, cbtScalar& outMaxH) const {
+        const int wQuads = m_heightStickWidth - 1;
+        const int lQuads = m_heightStickLength - 1;
+        if (x < 0 || z < 0 || x >= wQuads || z >= lQuads)
+            return false;
+        const std::size_t idx = static_cast<std::size_t>(z) * wQuads + x;
+        if (idx >= m_quadExtents.size())
+            return false;
+        const cbtScalar sUp = m_localScaling[m_upAxis];
+        outMinH = m_quadExtents[idx].minH * sUp;
+        outMaxH = m_quadExtents[idx].maxH * sUp;
+        return true;
     }
 
 
