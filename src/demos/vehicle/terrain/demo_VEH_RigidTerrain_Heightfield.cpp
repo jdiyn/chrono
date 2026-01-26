@@ -98,7 +98,7 @@ int main(int argc, char* argv[]) {
     // Create the shared contact material for all patches
     auto patch_mat = chrono_types::make_shared<ChContactMaterialNSC>();
     patch_mat->SetFriction(0.5);
-    //patch_mat->SetRollingFriction(0.0000001);
+    patch_mat->SetRollingFriction(0.0001);
     patch_mat->SetRestitution(0.01f);
 
 

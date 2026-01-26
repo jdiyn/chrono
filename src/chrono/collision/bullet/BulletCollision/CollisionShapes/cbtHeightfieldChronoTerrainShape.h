@@ -157,17 +157,14 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     }
 
     inline cbtVector3 getInverseLocalScaling() const {
-        cbtScalar x = m_localScaling.getX();
-        cbtScalar y = m_localScaling.getY();
-        cbtScalar z = m_localScaling.getZ();
-
-        // if any axis is zero, return identity to avoid divid by zero
-        if (x == cbtScalar(0) || y == cbtScalar(0) || z == cbtScalar(0)) {
-            return cbtVector3(cbtScalar(1), cbtScalar(1), cbtScalar(1));
-        }
-
-        return cbtVector3(cbtScalar(1) / x, cbtScalar(1) / y, cbtScalar(1) / z);
+        // Cached to avoid divisions in hot paths.
+        return m_invLocalScaling;
     }
+
+    // Cache control. Defaults are enabled.
+    void setUseVertexCache(bool enable);
+    void setUseQuadExtentsCache(bool enable);
+    void rebuildCaches();
 
 
     /// Build or clear the chunked min/max accelerator
@@ -191,13 +188,33 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         const int lQuads = m_heightStickLength - 1;
         if (x < 0 || z < 0 || x >= wQuads || z >= lQuads)
             return false;
-        const std::size_t idx = static_cast<std::size_t>(z) * wQuads + x;
-        if (idx >= m_quadExtents.size())
-            return false;
         const cbtScalar sUp = m_localScaling[m_upAxis];
-        outMinH = m_quadExtents[idx].minH * sUp;
-        outMaxH = m_quadExtents[idx].maxH * sUp;
+
+        // Fast path: cached extents
+        if (m_useQuadExtentsCache && !m_quadExtents.empty()) {
+            const std::size_t idx = static_cast<std::size_t>(z) * wQuads + x;
+            if (idx >= m_quadExtents.size())
+                return false;
+            outMinH = m_quadExtents[idx].minH * sUp;
+            outMaxH = m_quadExtents[idx].maxH * sUp;
+            return true;
+        }
+
+        // Fallback: compute from raw heights (no prebuilt cache)
+        const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
+        const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
+        const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+        const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+        const cbtScalar minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
+        const cbtScalar maxH = cbtMax(cbtMax(h00, h10), cbtMax(h01, h11));
+        outMinH = minH * sUp;
+        outMaxH = maxH * sUp;
         return true;
+    }
+
+    // Get a local-space vertex at integer grid coordinates. Uses cache when available.
+    inline void getVertexAt(int x, int z, cbtVector3& outVertex) const {
+        getVertex(x, z, outVertex);
     }
 
 
@@ -295,6 +312,7 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
 
     // local scaling as just 1,1,1 for initialisation
     cbtVector3 m_localScaling{1, 1, 1};
+    cbtVector3 m_invLocalScaling{1, 1, 1};
 
     // chunked min/max grid for raycast accelerator
     cbtAlignedObjectArray<Range> m_vboundsGrid;
@@ -313,10 +331,14 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     };
     std::vector<QuadExtents> m_quadExtents;
     void buildQuadExtents();  // call whenever the heightfield changes
+    bool m_useQuadExtentsCache{true};
 
     // caching vertices
     std::vector<cbtVector3> m_vertexCache;  // (width  × length) grid
     void buildVertexCache();                // rebuild when data or scaling changes! user need to manage
+    bool m_useVertexCache{true};
+
+    void updateInverseLocalScaling();
     // TODO:: set a public function rebuildcache to build quad extents and verteces
     //// replicate Bullet’s getVertex (including centering by m_localOrigin)
     void getVertex(int x, int y, cbtVector3& vertex) const;
@@ -332,7 +354,9 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
 
     // helper routines (defined in .cpp)
     void quantizeWithClamp(int out[3], const cbtVector3& pt) const;
-    cbtScalar getRawHeightFieldValue(int x, int y) const;
+    inline cbtScalar getRawHeightFieldValue(int x, int y) const {
+        return m_heightfieldData[y * m_heightStickWidth + x];
+    }
     static Range minmaxRange(cbtScalar a, cbtScalar b, cbtScalar c);
 };
 

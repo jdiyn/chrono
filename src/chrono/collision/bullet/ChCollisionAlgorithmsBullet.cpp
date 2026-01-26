@@ -25,9 +25,16 @@
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtCapsuleShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbt2DShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtCEtriangleShape.h"
+#include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtTriangleShape.h"
+#include "BulletCollision/CollisionShapes/cbtTriangleShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtSegmentShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionShapes/cbtHeightfieldChronoTerrainShape.h"
 #include "chrono/collision/bullet/BulletCollision/CollisionDispatch/SphereTriangleDetector.h"
+#include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtGjkEpaPenetrationDepthSolver.h"
+#include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtGjkPairDetector.h"
+#include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtPointCollector.h"
+#include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtVoronoiSimplexSolver.h"
+
 
 namespace chrono {
 
@@ -1690,7 +1697,7 @@ cbtConvexHeightfieldAlgorithm::cbtConvexHeightfieldAlgorithm(cbtPersistentManifo
                                                    const cbtCollisionObjectWrapper* b,
                                                    bool swapped)
     : cbtActivatingCollisionAlgorithm(ci, a, b) {
-    m_convex = static_cast<const cbtConvexShape*>(swapped ? b->getCollisionShape() : a->getCollisionShape());
+    m_convex = (const cbtConvexShape*)(swapped ? b->getCollisionShape() : a->getCollisionShape());
     m_ownManifold = (mf == nullptr);
     m_manifoldPtr =
         m_ownManifold ? ci.m_dispatcher1->getNewManifold(a->getCollisionObject(), b->getCollisionObject()) : mf;
@@ -1720,7 +1727,7 @@ void cbtConvexHeightfieldAlgorithm::collectSupportPoints(const cbtConvexShape* s
 
     // other shapes
     if (s->isPolyhedral()) {
-        const auto* poly = static_cast<const cbtPolyhedralConvexShape*>(s);
+        const auto* poly = (const cbtPolyhedralConvexShape*)s;
         int nv = poly->getNumVertices();
         constexpr int kMaxDenseVerts = 128;
         int n = std::min(nv, kMaxDenseVerts);
@@ -1745,7 +1752,7 @@ void cbtConvexHeightfieldAlgorithm::collectSupportPoints(const cbtConvexShape* s
 
 
 // ============================================================================
-// ADAPTIVE CONVEX-HEIGHTFIELD WITH TERRAIN VARIATION CHECK
+// CONVEX-HEIGHTFIELD (CLOSEST-POINT ON LOCAL TRIANGLES USING GJK/EPA)
 // ============================================================================
 
 void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWrapper* wrapperA,
@@ -1756,324 +1763,408 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
 
-    bool convexIsA = (wrapperA->getCollisionShape() == m_convex);
-    const auto* convexWrap = convexIsA ? wrapperA : wrapperB;
-    const auto* terrainWrap = convexIsA ? wrapperB : wrapperA;
+    // We generate a fresh small manifold each frame (2-4 points max) to keep contacts stable
+    // for large shapes without keeping lots of stale points around.
+    resultOut->getPersistentManifold()->clearManifold();
+
+    const bool convexIsA = (wrapperA->getCollisionShape() == m_convex);
+    const cbtCollisionObjectWrapper* convexWrap = convexIsA ? wrapperA : wrapperB;
+    const cbtCollisionObjectWrapper* terrainWrap = convexIsA ? wrapperB : wrapperA;
     const cbtTransform& convexTransform = convexWrap->getWorldTransform();
     const cbtTransform& terrainTransform = terrainWrap->getWorldTransform();
-    auto* terrainShape = static_cast<const cbtHeightfieldChronoTerrainShape*>(terrainWrap->getCollisionShape());
+    const cbtHeightfieldChronoTerrainShape* terrainShape =
+        (const cbtHeightfieldChronoTerrainShape*)terrainWrap->getCollisionShape();
     if (!terrainShape)
         return;
 
-    const cbtScalar keepSlop = m_manifoldPtr->getContactBreakingThreshold() * 0.5f;
-    auto* convexShape = static_cast<const cbtConvexShape*>(convexWrap->getCollisionShape());
+    const cbtConvexShape* convexShape = (const cbtConvexShape*)convexWrap->getCollisionShape();
     const cbtScalar convexMargin = convexShape->getMargin();
     const cbtScalar terrainMargin = terrainShape->getMargin();
+    const cbtScalar keepSlop = m_manifoldPtr->getContactBreakingThreshold() * cbtScalar(0.5);
+    const cbtScalar cutoff = convexMargin + terrainMargin + keepSlop;
+    const cbtScalar cutoff2 = cutoff * cutoff;
 
+    const int W = terrainShape->getWidth();
+    const int L = terrainShape->getLength();
+    if (W < 2 || L < 2)
+        return;
+
+    int axisU = 0, axisV = 1;
+    terrainShape->getPlanarAxes(axisU, axisV);
     const int upAxis = terrainShape->getUpAxis();
-    cbtVector3 worldUp(0, 0, 0);
-    worldUp[upAxis] = 1.0f;
-    cbtVector3 terrainWorldUp = terrainTransform.getBasis() * worldUp;
-    terrainWorldUp.normalize();
 
-    // ============================================================================
-    // Compute AABB for terrain variation check
-    // ============================================================================
-
+    // Build an expanded AABB for the convex in world space, then bring it into the terrain's unscaled local grid.
     cbtVector3 aabbMin, aabbMax;
     convexShape->getAabb(convexTransform, aabbMin, aabbMax);
-    cbtScalar expand = convexMargin + terrainMargin + keepSlop;
-    aabbMin -= cbtVector3(expand, expand, expand);
-    aabbMax += cbtVector3(expand, expand, expand);
+    aabbMin -= cbtVector3(cutoff, cutoff, cutoff);
+    aabbMax += cbtVector3(cutoff, cutoff, cutoff);
 
-    // Estimate characteristic size of convex shape
-    cbtVector3 aabbExtent = aabbMax - aabbMin;
-    cbtScalar characteristicSize = (aabbExtent.x() + aabbExtent.y() + aabbExtent.z()) / 3.0f;
+    const cbtTransform invTerrain = terrainTransform.inverse();
+    const cbtVector3 invS = terrainShape->getInverseLocalScaling();
 
-    // ============================================================================
-    // STEP 2: Check terrain variation in projected AABB
-    // Sample 9 points (center + 8 around perimeter) to estimate complexity
-    // ============================================================================
+    cbtScalar minU = SIMD_INFINITY, maxU = -SIMD_INFINITY;
+    cbtScalar minV = SIMD_INFINITY, maxV = -SIMD_INFINITY;
+    cbtScalar minUp = SIMD_INFINITY, maxUp = -SIMD_INFINITY;
 
-    cbtVector3 aabbCenter = (aabbMin + aabbMax) * 0.5f;
-    cbtVector3 aabbHalfExtent = (aabbMax - aabbMin) * 0.5f;
+    const cbtVector3 corners[8] = {
+        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMin.z()), cbtVector3(aabbMax.x(), aabbMin.y(), aabbMin.z()),
+        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMin.z()), cbtVector3(aabbMax.x(), aabbMax.y(), aabbMin.z()),
+        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMax.z()), cbtVector3(aabbMax.x(), aabbMin.y(), aabbMax.z()),
+        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMax.z()), cbtVector3(aabbMax.x(), aabbMax.y(), aabbMax.z())};
 
-    struct TerrainVariationSample {
-        cbtScalar height;
-        cbtVector3 normal;
-        bool valid;
-    };
-
-    TerrainVariationSample variationSamples[9];
-    int validVariationSamples = 0;
-
-    // Sample positions: center + 8 corners of AABB projection
-    cbtVector3 sampleOffsets[9];
-    sampleOffsets[0] = cbtVector3(0, 0, 0);  // Center
-    sampleOffsets[1] = cbtVector3(1, 0, 1);
-    sampleOffsets[2] = cbtVector3(-1, 0, 1);
-    sampleOffsets[3] = cbtVector3(1, 0, -1);
-    sampleOffsets[4] = cbtVector3(-1, 0, -1);
-    sampleOffsets[5] = cbtVector3(1, 0, 0);
-    sampleOffsets[6] = cbtVector3(-1, 0, 0);
-    sampleOffsets[7] = cbtVector3(0, 0, 1);
-    sampleOffsets[8] = cbtVector3(0, 0, -1);
-
-    for (int i = 0; i < 9; ++i) {
-        cbtVector3 sampleQuery = aabbCenter + cbtVector3(sampleOffsets[i].x() * aabbHalfExtent.x(),
-                                                         sampleOffsets[i].y() * aabbHalfExtent.y(),
-                                                         sampleOffsets[i].z() * aabbHalfExtent.z());
-
-        cbtVector3 terrainPt, terrainNormal;
-        if (terrainShape->sampleWorld(terrainTransform, sampleQuery, terrainPt, terrainNormal)) {
-            if (terrainNormal.length2() >= SIMD_EPSILON) {
-                terrainNormal.normalize();
-                variationSamples[i].height = terrainPt[upAxis];
-                variationSamples[i].normal = terrainNormal;
-                variationSamples[i].valid = true;
-                validVariationSamples++;
-            }
-        }
+    for (const cbtVector3& c : corners) {
+        cbtVector3 local = invTerrain * c;           // scaled terrain local
+        cbtVector3 unscaled = local * invS;          // grid coordinates
+        minU = cbtMin(minU, unscaled[axisU]);
+        maxU = cbtMax(maxU, unscaled[axisU]);
+        minV = cbtMin(minV, unscaled[axisV]);
+        maxV = cbtMax(maxV, unscaled[axisV]);
+        minUp = cbtMin(minUp, local[upAxis]);
+        maxUp = cbtMax(maxUp, local[upAxis]);
     }
 
-    if (validVariationSamples < 3)
-        return;  // Not enough terrain data
+    const cbtScalar halfW = cbtScalar(W - 1) * cbtScalar(0.5);
+    const cbtScalar halfL = cbtScalar(L - 1) * cbtScalar(0.5);
+    const cbtScalar minGridU = minU + halfW;
+    const cbtScalar maxGridU = maxU + halfW;
+    const cbtScalar minGridV = minV + halfL;
+    const cbtScalar maxGridV = maxV + halfL;
 
-    // Calculate variation metrics
-    cbtScalar minHeight = variationSamples[0].height;
-    cbtScalar maxHeight = variationSamples[0].height;
-    cbtScalar avgNormalDot = 0.0f;
-    int normalComparisons = 0;
+    int gx0 = cbtMax(0, cbtMin(static_cast<int>(std::floor((double)minGridU)) - 1, W - 2));
+    int gx1 = cbtMax(0, cbtMin(static_cast<int>(std::ceil((double)maxGridU)) + 1, W - 2));
+    int gz0 = cbtMax(0, cbtMin(static_cast<int>(std::floor((double)minGridV)) - 1, L - 2));
+    int gz1 = cbtMax(0, cbtMin(static_cast<int>(std::ceil((double)maxGridV)) + 1, L - 2));
 
-    for (int i = 0; i < 9; ++i) {
-        if (!variationSamples[i].valid)
-            continue;
+    if (gx1 < gx0 || gz1 < gz0)
+        return;
 
-        minHeight = cbtMin(minHeight, variationSamples[i].height);
-        maxHeight = cbtMax(maxHeight, variationSamples[i].height);
-
-        for (int j = i + 1; j < 9; ++j) {
-            if (!variationSamples[j].valid)
-                continue;
-            avgNormalDot += variationSamples[i].normal.dot(variationSamples[j].normal);
-            normalComparisons++;
-        }
-    }
-
-    if (normalComparisons > 0)
-        avgNormalDot /= normalComparisons;
-
-    // Terrain complexity score
-    cbtScalar heightVariation = (maxHeight - minHeight) / (characteristicSize * cbtScalar(0.01));
-    cbtScalar normalVariation = cbtScalar(1.0) - avgNormalDot;
-    cbtScalar terrainComplexity = heightVariation + normalVariation * 10.0f;
-
-    // Decide support sampling density based on complexity
-    int numSupportDirs;
-    int numFaceSamples;
-
-    if (terrainComplexity < 0.5f) {
-        numSupportDirs = 5;  // Flat: minimal (center + 4 cardinal)
-        numFaceSamples = 2;  // Only primary faces
-    } else if (terrainComplexity < 2.0f) {
-        numSupportDirs = 9;  // Moderate (center + 8 radial)
-        numFaceSamples = 4;
-    } else {
-        numSupportDirs = 13;  // Complex (full sampling)
-        numFaceSamples = 8;
-    }
-
-    // ============================================================================
-    // STEP 3: Generate contact candidates with adaptive sampling
-    // ============================================================================
+    const auto& vcache = terrainShape->getVertexCache();
+    if (!vcache.empty() && (int)vcache.size() < W * L)
+        return;
 
     struct ContactCandidate {
-        cbtVector3 convexPoint;
-        cbtVector3 terrainPoint;
-        cbtVector3 normal;
-        cbtScalar penetration;
-        int priority;
+        cbtVector3 pointOnB;
+        cbtVector3 normalOnB;
+        cbtScalar distance;
     };
 
+    // We keep a small set of best candidates (lowest distance = deepest penetration).
+    // Then we reduce them to MAX_CONTACTS using position + normal similarity rules.
     cbtAlignedObjectArray<ContactCandidate> candidates;
     candidates.reserve(32);
+    const int MAX_CONTACTS = 4;
+    const cbtScalar NORMAL_COS_THRESHOLD = cbtCos(15.0f * SIMD_PI / 180.0f);
 
-    // STAGE 1: COM
-    {
-        cbtVector3 worldCOM = convexTransform.getOrigin();
-        cbtVector3 terrainPt, terrainNormal;
-
-        if (terrainShape->sampleWorld(terrainTransform, worldCOM, terrainPt, terrainNormal)) {
-            if (terrainNormal.length2() >= SIMD_EPSILON) {
-                terrainNormal.normalize();
-                cbtVector3 comToTerrain = terrainPt - worldCOM;
-                cbtScalar signedDist = comToTerrain.dot(terrainNormal);
-                cbtScalar penetration = -signedDist - convexMargin - terrainMargin;
-
-                if (penetration < keepSlop) {
-                    cbtVector3 convexPt = worldCOM + terrainNormal * signedDist;
-                    candidates.push_back({convexPt, terrainPt, terrainNormal, penetration, 0});
-                }
+    auto pushCandidate = [&](const cbtVector3& n, const cbtVector3& pOnB, cbtScalar dist) {
+        if (dist > keepSlop)
+            return;
+        if (n.length2() < SIMD_EPSILON)
+            return;
+        if ((int)candidates.size() < 32) {
+            candidates.push_back({pOnB, n, dist});
+            return;
+        }
+        // Replace the worst candidate if this one is better.
+        int worstIdx = 0;
+        cbtScalar worstDist = candidates[0].distance;
+        for (int i = 1; i < candidates.size(); ++i) {
+            if (candidates[i].distance > worstDist) {
+                worstDist = candidates[i].distance;
+                worstIdx = i;
             }
         }
-    }
+        if (dist < worstDist)
+            candidates[worstIdx] = {pOnB, n, dist};
+    };
 
-    // STAGE 2: Support points (adaptive count)
-    {
-        cbtVector3 supportDirs[13];
-        supportDirs[0] = -terrainWorldUp;
+    cbtVector3 tempVert;
+    auto getVert = [&](int x, int z) -> const cbtVector3& {
+        if (!vcache.empty())
+            return vcache[static_cast<std::size_t>(z) * W + x];
+        terrainShape->getVertexAt(x, z, tempVert);
+        return tempVert;
+    };
+
+    // ------------------------------------------------------------------------
+    // FAST PATH: BOX vs HEIGHTFIELD
+    // ------------------------------------------------------------------------
+    // For large flat-bottomed boxes, doing GJK against every triangle is expensive.
+    // Instead, we generate a few box support points near the "down" direction and
+    // do a cheap closest-point-on-triangle search in a *small* neighborhood around each point.
+    if (convexShape->getShapeType() == BOX_SHAPE_PROXYTYPE) {
+        const cbtBoxShape* boxShape = (const cbtBoxShape*)convexShape;
+
+        // Terrain up direction in world.
+        cbtVector3 worldUp(0, 0, 0);
+        worldUp[upAxis] = 1.0f;
+        cbtVector3 terrainWorldUp = terrainTransform.getBasis() * worldUp;
+        if (terrainWorldUp.length2() > SIMD_EPSILON)
+            terrainWorldUp.normalize();
+        else
+            terrainWorldUp = worldUp;
 
         cbtVector3 perp1 = (cbtFabs(terrainWorldUp.x()) < 0.9f)
-                               ? cbtVector3(1, 0, 0).cross(terrainWorldUp).normalized()
-                               : cbtVector3(0, 1, 0).cross(terrainWorldUp).normalized();
-        cbtVector3 perp2 = terrainWorldUp.cross(perp1).normalized();
+                               ? cbtVector3(1, 0, 0).cross(terrainWorldUp)
+                               : cbtVector3(0, 1, 0).cross(terrainWorldUp);
+        if (perp1.length2() > SIMD_EPSILON)
+            perp1.normalize();
+        cbtVector3 perp2 = terrainWorldUp.cross(perp1);
+        if (perp2.length2() > SIMD_EPSILON)
+            perp2.normalize();
 
-        if (numSupportDirs >= 5) {
-            // 4 cardinal
-            supportDirs[1] = perp1;
-            supportDirs[2] = -perp1;
-            supportDirs[3] = perp2;
-            supportDirs[4] = -perp2;
-        }
+        // Support directions (mostly down, plus some sideways) to produce a few "bottom" points.
+        cbtVector3 supportDirs[9] = {
+            -terrainWorldUp,
+            (-terrainWorldUp + perp1).normalized(),
+            (-terrainWorldUp - perp1).normalized(),
+            (-terrainWorldUp + perp2).normalized(),
+            (-terrainWorldUp - perp2).normalized(),
+            (-terrainWorldUp + perp1 + perp2).normalized(),
+            (-terrainWorldUp + perp1 - perp2).normalized(),
+            (-terrainWorldUp - perp1 + perp2).normalized(),
+            (-terrainWorldUp - perp1 - perp2).normalized(),
+        };
 
-        if (numSupportDirs >= 9) {
-            // 4 diagonal
-            for (int i = 0; i < 4; ++i) {
-                cbtScalar angle = i * SIMD_PI / 2.0f + SIMD_PI / 4.0f;
-                cbtScalar tilt = SIMD_PI / 6.0f;
-                supportDirs[5 + i] =
-                    (-terrainWorldUp * cbtCos(tilt) + (perp1 * cbtCos(angle) + perp2 * cbtSin(angle)) * cbtSin(tilt))
-                        .normalized();
-            }
-        }
+        // Small local-triangle search around a world-space query point.
+        auto queryPointAgainstLocalTriangles = [&](const cbtVector3& queryWorld) {
+            const cbtVector3 queryLocal = invTerrain * queryWorld;
+            const cbtVector3 queryLocalUnscaled = queryLocal * invS;
 
-        if (numSupportDirs >= 13) {
-            // 4 mid-level
-            for (int i = 0; i < 4; ++i) {
-                cbtScalar angle = i * SIMD_PI / 2.0f;
-                cbtScalar tilt = SIMD_PI / 4.0f;
-                supportDirs[9 + i] =
-                    (-terrainWorldUp * cbtCos(tilt) + (perp1 * cbtCos(angle) + perp2 * cbtSin(angle)) * cbtSin(tilt))
-                        .normalized();
-            }
-        }
+            const cbtScalar halfW = cbtScalar(W - 1) * cbtScalar(0.5);
+            const cbtScalar halfL = cbtScalar(L - 1) * cbtScalar(0.5);
+            const cbtScalar gridX = queryLocalUnscaled[axisU] + halfW;
+            const cbtScalar gridZ = queryLocalUnscaled[axisV] + halfL;
 
-        for (int i = 0; i < numSupportDirs; ++i) {
-            cbtVector3 localDir = convexTransform.getBasis().transpose() * supportDirs[i];
-            cbtVector3 supportPtLocal = convexShape->localGetSupportingVertexWithoutMargin(localDir);
-            cbtVector3 supportPtWorld = convexTransform * supportPtLocal;
+            const cbtVector3 localScaling = terrainShape->getLocalScaling();
+            const cbtScalar cellU = cbtFabs(localScaling[axisU]);
+            const cbtScalar cellV = cbtFabs(localScaling[axisV]);
+            const cbtScalar safeCellU = (cellU > SIMD_EPSILON) ? cellU : cbtScalar(1);
+            const cbtScalar safeCellV = (cellV > SIMD_EPSILON) ? cellV : cbtScalar(1);
+            const int rU = (int)std::ceil((double)(cutoff / safeCellU)) + 1;
+            const int rV = (int)std::ceil((double)(cutoff / safeCellV)) + 1;
 
-            cbtVector3 terrainPt, terrainNormal;
-            if (terrainShape->sampleWorld(terrainTransform, supportPtWorld, terrainPt, terrainNormal)) {
-                if (terrainNormal.length2() >= SIMD_EPSILON) {
-                    terrainNormal.normalize();
-                    cbtVector3 supportToTerrain = terrainPt - supportPtWorld;
-                    cbtScalar signedDist = supportToTerrain.dot(terrainNormal);
-                    cbtScalar penetration = -signedDist - convexMargin - terrainMargin;
+            // If this query point is far outside the terrain footprint, skip it.
+            if (gridX < -cbtScalar(rU) || gridX > cbtScalar(W - 1) + cbtScalar(rU) || gridZ < -cbtScalar(rV) ||
+                gridZ > cbtScalar(L - 1) + cbtScalar(rV))
+                return;
 
-                    if (penetration < keepSlop) {
-                        candidates.push_back({supportPtWorld, terrainPt, terrainNormal, penetration, 1});
+            int cx = (int)std::floor((double)gridX);
+            int cz = (int)std::floor((double)gridZ);
+            cx = cbtMax(0, cbtMin(cx, W - 2));
+            cz = cbtMax(0, cbtMin(cz, L - 2));
+
+            cbtScalar bestD2 = cutoff2;
+            cbtVector3 bestP(0, 0, 0);
+            cbtVector3 bestN(0, 0, 0);
+
+            const int x0 = cbtMax(0, cx - rU);
+            const int x1 = cbtMin(W - 2, cx + rU);
+            const int z0 = cbtMax(0, cz - rV);
+            const int z1 = cbtMin(L - 2, cz + rV);
+
+            for (int z = z0; z <= z1; ++z) {
+                for (int x = x0; x <= x1; ++x) {
+                    cbtScalar quadMinH, quadMaxH;
+                    if (!terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH))
+                        continue;
+                    const cbtScalar qUp = queryLocal[upAxis];
+                    if (qUp > quadMaxH + cutoff || qUp < quadMinH - cutoff)
+                        continue;
+
+                    const cbtVector3 v00 = getVert(x, z);
+                    const cbtVector3 v10 = getVert(x + 1, z);
+                    const cbtVector3 v01 = getVert(x, z + 1);
+                    const cbtVector3 v11 = getVert(x + 1, z + 1);
+                    const bool alt = terrainShape->useAlternateDiagonal(x, z);
+
+                    cbtVector3 t0[3];
+                    cbtVector3 t1[3];
+                    if (alt) {
+                        t0[0] = v00;
+                        t0[1] = v10;
+                        t0[2] = v11;
+                        t1[0] = v00;
+                        t1[1] = v11;
+                        t1[2] = v01;
+                    } else {
+                        t0[0] = v00;
+                        t0[1] = v10;
+                        t0[2] = v01;
+                        t1[0] = v10;
+                        t1[1] = v11;
+                        t1[2] = v01;
+                    }
+
+                    for (int ti = 0; ti < 2; ++ti) {
+                        const cbtVector3* tri = (ti == 0) ? t0 : t1;
+                        const cbtVector3 cp = cbtHeightfieldChronoTerrainShape::ClosestPointOnTriangle(
+                            queryLocal, tri[0], tri[1], tri[2]);
+                        const cbtVector3 d = queryLocal - cp;
+                        const cbtScalar d2 = d.length2();
+                        if (d2 >= bestD2)
+                            continue;
+
+                        cbtVector3 n = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
+                        if (n.length2() < SIMD_EPSILON)
+                            continue;
+
+                        // Force a consistent normal orientation ("up" should be positive in local upAxis).
+                        if (n[upAxis] < 0)
+                            n = -n;
+                        n.normalize();
+
+                        // One-sided terrain: ignore contacts from below the triangle.
+                        if (d.dot(n) < -cutoff)
+                            continue;
+
+                        bestD2 = d2;
+                        bestP = cp;
+                        bestN = n;
                     }
                 }
+            }
+
+            if (bestD2 >= cutoff2 || bestN.length2() < SIMD_EPSILON)
+                return;
+
+            const cbtScalar dist = cbtSqrt(bestD2) - (convexMargin + terrainMargin);
+            cbtVector3 nWorld = terrainTransform.getBasis() * bestN;
+            if (nWorld.length2() > SIMD_EPSILON)
+                nWorld.normalize();
+
+            cbtVector3 pWorld = terrainTransform * bestP + nWorld * terrainMargin;
+            // Ensure the normal points from terrain(B) to convex(A)
+            if (!convexIsA)
+                nWorld = -nWorld;
+
+            pushCandidate(nWorld, pWorld, dist);
+        };
+
+        for (int i = 0; i < 9; ++i) {
+            const cbtVector3 localDir = convexTransform.getBasis().transpose() * supportDirs[i];
+            const cbtVector3 supportLocal = boxShape->localGetSupportingVertexWithoutMargin(localDir);
+            const cbtVector3 supportWorld = convexTransform * supportLocal;
+            queryPointAgainstLocalTriangles(supportWorld);
+        }
+    } else {
+        // ------------------------------------------------------------------------
+        // GENERIC PATH: any convex shape (Chrono uses many) via GJK/EPA vs triangles
+        // ------------------------------------------------------------------------
+        cbtVoronoiSimplexSolver simplexSolver;
+        cbtGjkEpaPenetrationDepthSolver epaSolver;
+        cbtDiscreteCollisionDetectorInterface::ClosestPointInput input;
+        input.m_maximumDistanceSquared = cutoff2;
+
+        for (int z = gz0; z <= gz1; ++z) {
+            for (int x = gx0; x <= gx1; ++x) {
+            cbtScalar quadMinH, quadMaxH;
+            if (!terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH))
+                continue;
+            if (minUp > quadMaxH + cutoff || maxUp < quadMinH - cutoff)
+                continue;
+
+            cbtVector3 v00 = getVert(x, z);
+            cbtVector3 v10 = getVert(x + 1, z);
+            cbtVector3 v01 = getVert(x, z + 1);
+            cbtVector3 v11 = getVert(x + 1, z + 1);
+
+            bool alt = terrainShape->useAlternateDiagonal(x, z);
+            const cbtVector3 triA0 = v00;
+            const cbtVector3 triA1 = v10;
+            const cbtVector3 triA2 = alt ? v11 : v01;
+            const cbtVector3 triB0 = alt ? v00 : v10;
+            const cbtVector3 triB1 = alt ? v11 : v11;
+            const cbtVector3 triB2 = alt ? v01 : v01;
+
+            const cbtVector3 tris[2][3] = {{triA0, triA1, triA2}, {triB0, triB1, triB2}};
+
+            for (int t = 0; t < 2; ++t) {
+                cbtVector3 w0 = terrainTransform * tris[t][0];
+                cbtVector3 w1 = terrainTransform * tris[t][1];
+                cbtVector3 w2 = terrainTransform * tris[t][2];
+
+                cbtTriangleShape triShape(w0, w1, w2);
+                triShape.setMargin(terrainMargin);
+
+                // Cheap plane-distance cull: if the convex support point along -n is farther than cutoff
+                // from the triangle plane, there is no possible contact.
+                cbtVector3 triNormal = (w1 - w0).cross(w2 - w0);
+                if (triNormal.length2() < SIMD_EPSILON)
+                    continue;
+                triNormal.normalize();
+
+                cbtVector3 supportDirLocal = convexTransform.getBasis().transpose() * (-triNormal);
+                cbtVector3 supportLocal = convexShape->localGetSupportingVertexWithoutMargin(supportDirLocal);
+                cbtVector3 supportWorld = convexTransform * supportLocal;
+                cbtScalar planeDist = (supportWorld - w0).dot(triNormal);
+                if (planeDist > cutoff)
+                    continue;
+
+                const cbtConvexShape* shapeA = convexIsA ? convexShape : (const cbtConvexShape*)&triShape;
+                const cbtConvexShape* shapeB = convexIsA ? (const cbtConvexShape*)&triShape : convexShape;
+
+                input.m_transformA = convexIsA ? convexTransform : cbtTransform::getIdentity();
+                input.m_transformB = convexIsA ? cbtTransform::getIdentity() : convexTransform;
+
+                cbtPointCollector output;
+                cbtGjkPairDetector detector(shapeA, shapeB, &simplexSolver, &epaSolver);
+                detector.getClosestPoints(input, output, nullptr);
+                if (!output.m_hasResult)
+                    continue;
+
+                const cbtScalar dist = output.m_distance;  // negative when penetrating
+                cbtVector3 n = output.m_normalOnBInWorld;
+                pushCandidate(n, output.m_pointInWorld, dist);
             }
         }
     }
 
-    // STAGE 3: Face sampling (adaptive count)
-    auto* polyShape = dynamic_cast<const cbtPolyhedralConvexShape*>(convexShape);
-    if (polyShape) {
-        cbtVector3 terrainUpLocal = convexTransform.getBasis().transpose() * terrainWorldUp;
-        int numFaces = cbtMin(polyShape->getNumPlanes(), numFaceSamples);
-
-        for (int faceIdx = 0; faceIdx < numFaces; ++faceIdx) {
-            cbtVector3 faceNormal, facePt;
-            polyShape->getPlane(faceNormal, facePt, faceIdx);
-
-            if (faceNormal.dot(terrainUpLocal) > -0.1f)
-                continue;
-
-            cbtVector3 worldFacePt = convexTransform * facePt;
-
-            cbtVector3 terrainPt, terrainNormal;
-            if (terrainShape->sampleWorld(terrainTransform, worldFacePt, terrainPt, terrainNormal)) {
-                if (terrainNormal.length2() >= SIMD_EPSILON) {
-                    terrainNormal.normalize();
-                    cbtVector3 faceToTerrain = terrainPt - worldFacePt;
-                    cbtScalar signedDist = faceToTerrain.dot(terrainNormal);
-                    cbtScalar penetration = -signedDist - convexMargin - terrainMargin;
-
-                    if (penetration < keepSlop) {
-                        candidates.push_back({worldFacePt, terrainPt, terrainNormal, penetration, 2});
-                    }
-                }
-            }
-        }
     }
 
     if (candidates.size() == 0)
         return;
 
-    // ============================================================================
-    // STEP 4: Contact reduction (same as before)
-    // ============================================================================
-
-    struct ContactSorter {
+    // Reduce candidates to a stable set of up to 4 contacts.
+    struct CandidateSorter {
         bool operator()(const ContactCandidate& a, const ContactCandidate& b) const {
-            if (a.priority != b.priority)
-                return a.priority < b.priority;
-            return a.penetration < b.penetration;
+            return a.distance < b.distance;
         }
     };
-    candidates.quickSort(ContactSorter());
+    candidates.quickSort(CandidateSorter());
 
-    const int MAX_CONTACTS = 4;
-    const cbtScalar MIN_SEPARATION = convexMargin * 0.5f;
-    const cbtScalar NORMAL_COS_THRESHOLD = cbtCos(15.0f * SIMD_PI / 180.0f);
+    const cbtVector3 aabbExtent = aabbMax - aabbMin;
+    const cbtScalar planarExtent = cbtMin(aabbExtent[axisU], aabbExtent[axisV]);
+    const cbtScalar MIN_SEPARATION = cbtMax(convexMargin * cbtScalar(0.5), planarExtent * cbtScalar(0.1));
+    const cbtScalar MIN_SEPARATION2 = MIN_SEPARATION * MIN_SEPARATION;
 
     cbtAlignedObjectArray<ContactCandidate> finalContacts;
     finalContacts.reserve(MAX_CONTACTS);
 
     for (int i = 0; i < candidates.size() && finalContacts.size() < MAX_CONTACTS; ++i) {
-        if (candidates[i].penetration > 0.0f)
+        const ContactCandidate& c = candidates[i];
+        if (c.distance > keepSlop)
             break;
 
         bool unique = true;
         for (int j = 0; j < finalContacts.size(); ++j) {
-            cbtScalar posDist = (candidates[i].terrainPoint - finalContacts[j].terrainPoint).length();
-            cbtScalar normalDot = candidates[i].normal.dot(finalContacts[j].normal);
-
-            if (posDist < MIN_SEPARATION && normalDot > NORMAL_COS_THRESHOLD) {
-                if (candidates[i].penetration < finalContacts[j].penetration) {
-                    finalContacts[j] = candidates[i];
-                }
+            const cbtVector3 dp = c.pointOnB - finalContacts[j].pointOnB;
+            const cbtScalar posDist2 = dp.length2();
+            const cbtScalar normalDot = c.normalOnB.dot(finalContacts[j].normalOnB);
+            if (posDist2 < MIN_SEPARATION2 && normalDot > NORMAL_COS_THRESHOLD) {
+                // Keep the deeper contact
+                if (c.distance < finalContacts[j].distance)
+                    finalContacts[j] = c;
                 unique = false;
                 break;
             }
         }
-
-        if (unique) {
-            finalContacts.push_back(candidates[i]);
-        }
+        if (unique)
+            finalContacts.push_back(c);
     }
-
-    // ============================================================================
-    // STEP 5: Emit contacts
-    // ============================================================================
 
     for (int i = 0; i < finalContacts.size(); ++i) {
-        const ContactCandidate& c = finalContacts[i];
-
-        cbtVector3 contactNormal = c.normal;
-        cbtVector3 contactPoint = c.convexPoint;
-        cbtScalar penetration = c.penetration;
-
-        if (!convexIsA) {
-            contactNormal = -contactNormal;
-        }
-
-        resultOut->addContactPoint(contactNormal, contactPoint, penetration);
+        resultOut->addContactPoint(finalContacts[i].normalOnB, finalContacts[i].pointOnB, finalContacts[i].distance);
     }
-
     resultOut->refreshContactPoints();
 }
 
@@ -2084,10 +2175,9 @@ cbtScalar cbtConvexHeightfieldAlgorithm::calculateTimeOfImpact(cbtCollisionObjec
                                                                const cbtDispatcherInfo& /*dispatchInfo*/,
                                                                cbtManifoldResult* /*resultOut*/) {
     bool terrainIsA = (body0->getCollisionShape()->getShapeType() == TERRAIN_SHAPE_PROXYTYPE);
-    auto* terrain = terrainIsA ? static_cast<const cbtHeightfieldChronoTerrainShape*>(body0->getCollisionShape())
-                               : static_cast<const cbtHeightfieldChronoTerrainShape*>(body1->getCollisionShape());
-    auto* convex = terrainIsA ? static_cast<const cbtConvexShape*>(body1->getCollisionShape())
-                              : static_cast<const cbtConvexShape*>(body0->getCollisionShape());
+    auto* terrain = terrainIsA ? (const cbtHeightfieldChronoTerrainShape*)body0->getCollisionShape()
+                               : (const cbtHeightfieldChronoTerrainShape*)body1->getCollisionShape();
+    auto* convex = terrainIsA ? (const cbtConvexShape*)body1->getCollisionShape() : (const cbtConvexShape*)body0->getCollisionShape();
 
     const cbtTransform& fromTransform = terrainIsA ? body1->getWorldTransform() : body0->getWorldTransform();
     const cbtTransform& toTransform =
@@ -2157,7 +2247,7 @@ cbtSphereHeightfieldAlgorithm::cbtSphereHeightfieldAlgorithm(cbtPersistentManifo
                                                              const cbtCollisionObjectWrapper* b,
                                                              bool swapped)
     : cbtActivatingCollisionAlgorithm(ci, a, b) {
-    m_convex = static_cast<const cbtConvexShape*>(swapped ? b->getCollisionShape() : a->getCollisionShape());
+    m_convex = (const cbtConvexShape*)(swapped ? b->getCollisionShape() : a->getCollisionShape());
     m_ownManifold = (mf == nullptr);
     m_manifoldPtr =
         m_ownManifold ? ci.m_dispatcher1->getNewManifold(a->getCollisionObject(), b->getCollisionObject()) : mf;
@@ -2189,21 +2279,26 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
 
+    // Only want one fresh contact per sphere/terrain pair. Keeping old contacts around can produce
+    // solver artifacts (especially noticeable with rolling friction)
+    resultOut->getPersistentManifold()->clearManifold();
+
     // Figure out which wrapper is the sphere and which is the terrain
     const bool sphereIsA = (wrapperA->getCollisionShape() == m_convex);
-    const auto* sphereWrap = sphereIsA ? wrapperA : wrapperB;
-    const auto* terrainWrap = sphereIsA ? wrapperB : wrapperA;
+    const cbtCollisionObjectWrapper* sphereWrap = sphereIsA ? wrapperA : wrapperB;
+    const cbtCollisionObjectWrapper* terrainWrap = sphereIsA ? wrapperB : wrapperA;
 
     // get world transforms
     const cbtTransform& sphereTransform = sphereWrap->getWorldTransform();
     const cbtTransform& terrainTransform = terrainWrap->getWorldTransform();
-    const auto* terrainShape = static_cast<const cbtHeightfieldChronoTerrainShape*>(terrainWrap->getCollisionShape());
+    const cbtHeightfieldChronoTerrainShape* terrainShape =
+        (const cbtHeightfieldChronoTerrainShape*)terrainWrap->getCollisionShape();
     if (!terrainShape)
         return;
 
     // Provide a slop tolerance to avoid jitter / creation and deletion of contacts constantly
     const cbtScalar contactSlop = m_manifoldPtr->getContactBreakingThreshold() * cbtScalar(0.5);
-    const auto* sphereShape = static_cast<const cbtSphereShape*>(m_convex);
+    const cbtSphereShape* sphereShape = (const cbtSphereShape*)m_convex;
     const cbtScalar radius = sphereShape->getRadius();
     const cbtScalar terrainMargin = terrainShape->getMargin();
 
@@ -2341,8 +2436,13 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         // Normal points from terrain surface toward the sphere center
         normalLocal = bestDeltaLocal / cbtSqrt(bestDist2);
     } else {
-        // Sphere center is basically on the surface. In this case bestDeltaLocal is ~zero, so we use the triangle normal instead
+        // Sphere center is extremely close to the triangle (numerically ~on it).
+        // In this case bestDeltaLocal is ~zero, so we use the triangle normal.
+        // IMPORTANT: make the normal consistently point from terrain toward the sphere center.
         normalLocal = bestTriNormalLocal;
+        const cbtVector3 centerDir = sphereCenterLocal - bestPointLocal;
+        if (centerDir.dot(normalLocal) < cbtScalar(0))
+            normalLocal = -normalLocal;
     }
 
     cbtVector3 normalWorld = terrainTransform.getBasis() * normalLocal;
@@ -2379,10 +2479,9 @@ cbtScalar cbtSphereHeightfieldAlgorithm::calculateTimeOfImpact(cbtCollisionObjec
                                                                const cbtDispatcherInfo& dispatchInfo,
                                                                cbtManifoldResult* resultOut) {
     bool terrainIsA = (body0->getCollisionShape()->getShapeType() == TERRAIN_SHAPE_PROXYTYPE);
-    auto* terrain = terrainIsA ? static_cast<const cbtHeightfieldChronoTerrainShape*>(body0->getCollisionShape())
-                               : static_cast<const cbtHeightfieldChronoTerrainShape*>(body1->getCollisionShape());
-    auto* sphere = terrainIsA ? static_cast<const cbtSphereShape*>(body1->getCollisionShape())
-                              : static_cast<const cbtSphereShape*>(body0->getCollisionShape());
+    auto* terrain = terrainIsA ? (const cbtHeightfieldChronoTerrainShape*)body0->getCollisionShape()
+                               : (const cbtHeightfieldChronoTerrainShape*)body1->getCollisionShape();
+    auto* sphere = terrainIsA ? (const cbtSphereShape*)body1->getCollisionShape() : (const cbtSphereShape*)body0->getCollisionShape();
 
     const cbtTransform& fromTransform = terrainIsA ? body1->getWorldTransform() : body0->getWorldTransform();
     const cbtTransform& toTransform =

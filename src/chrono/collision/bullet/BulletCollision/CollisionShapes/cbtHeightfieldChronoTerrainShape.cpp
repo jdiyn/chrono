@@ -19,7 +19,6 @@
 #include "chrono/collision/bullet/LinearMath/cbtTransformUtil.h"
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 // stores the vertices, without touching bullet, to use for parallelism safely
 struct TmpTriangleBuffer : public cbtTriangleCallback {
@@ -137,23 +136,78 @@ void cbtHeightfieldChronoTerrainShape::quantizeWithClamp(int out[3], const cbtVe
 
 // uses the cached vertices
 inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3& vtx) const {
-    vtx = m_vertexCache[static_cast<std::size_t>(y) * m_heightStickWidth + x];
+    if (m_useVertexCache && !m_vertexCache.empty()) {
+        vtx = m_vertexCache[static_cast<std::size_t>(y) * m_heightStickWidth + x];
+        return;
+    }
+
+    // Fallback: compute vertex on the fly (centered + scaled).
+    const cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
+    const cbtScalar lx = (-m_width * cbtScalar(0.5)) + cbtScalar(x);
+    const cbtScalar ly = (-m_length * cbtScalar(0.5)) + cbtScalar(y);
+    switch (m_upAxis) {
+        case 0:
+            vtx.setValue(h, lx, ly);
+            break;
+        case 1:
+            vtx.setValue(lx, h, ly);
+            break;
+        default:
+            vtx.setValue(lx, ly, h);
+            break;
+    }
+    vtx *= m_localScaling;
+}
+
+void cbtHeightfieldChronoTerrainShape::updateInverseLocalScaling() {
+    const cbtScalar x = m_localScaling.getX();
+    const cbtScalar y = m_localScaling.getY();
+    const cbtScalar z = m_localScaling.getZ();
+    if (x == cbtScalar(0) || y == cbtScalar(0) || z == cbtScalar(0)) {
+        m_invLocalScaling = cbtVector3(cbtScalar(1), cbtScalar(1), cbtScalar(1));
+    } else {
+        m_invLocalScaling = cbtVector3(cbtScalar(1) / x, cbtScalar(1) / y, cbtScalar(1) / z);
+    }
+}
+
+void cbtHeightfieldChronoTerrainShape::setUseVertexCache(bool enable) {
+    m_useVertexCache = enable;
+    if (m_useVertexCache)
+        buildVertexCache();
+    else
+        m_vertexCache.clear();
+}
+
+void cbtHeightfieldChronoTerrainShape::setUseQuadExtentsCache(bool enable) {
+    m_useQuadExtentsCache = enable;
+    if (m_useQuadExtentsCache)
+        buildQuadExtents();
+    else
+        m_quadExtents.clear();
+}
+
+void cbtHeightfieldChronoTerrainShape::rebuildCaches() {
+    if (m_useVertexCache)
+        buildVertexCache();
+    if (m_useQuadExtentsCache)
+        buildQuadExtents();
+    if (m_vboundsChunkSize > 0)
+        buildAccelerator(m_vboundsChunkSize);
 }
 
 void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
     // store locally – this fulfils the pure‑virtual contract
     m_localScaling = s;
 
+    updateInverseLocalScaling();
+
     // rebuild lookup tables that depend on scale
-    buildVertexCache();
-    buildQuadExtents();
+    if (m_useVertexCache)
+        buildVertexCache();
+    if (m_useQuadExtentsCache)
+        buildQuadExtents();
     if (m_vboundsChunkSize > 0)
         buildAccelerator(m_vboundsChunkSize);
-}
-
-// raw height from user array (uncentered; heightScale & centering applied elsewhere)
-inline cbtScalar cbtHeightfieldChronoTerrainShape::getRawHeightFieldValue(int x, int y) const {
-    return m_heightfieldData[y * m_heightStickWidth + x];
 }
 
 cbtScalar cbtHeightfieldChronoTerrainShape::getHeight(int x, int z) const {
@@ -251,9 +305,13 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     }
 
 
+    updateInverseLocalScaling();
+
     // build caching first time
-    buildQuadExtents();
-    buildVertexCache();
+    if (m_useQuadExtentsCache)
+        buildQuadExtents();
+    if (m_useVertexCache)
+        buildVertexCache();
 }
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
@@ -295,8 +353,48 @@ void cbtHeightfieldChronoTerrainShape::updateHeight(int x, int y, cbtScalar newH
     // Convert absolute height to base-relative
     m_heightfieldData[y * m_heightStickWidth + x] = newHeight_absolute - m_minHeight;
 
-    // Update cached data
-    buildVertexCache();  // Rebuild affected regions
+    // Update cached vertex (if enabled)
+    if (m_useVertexCache && !m_vertexCache.empty()) {
+        const cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
+        const cbtScalar lx = (-m_width * cbtScalar(0.5)) + cbtScalar(x);
+        const cbtScalar ly = (-m_length * cbtScalar(0.5)) + cbtScalar(y);
+        cbtVector3 vtx;
+        switch (m_upAxis) {
+            case 0:
+                vtx.setValue(h, lx, ly);
+                break;
+            case 1:
+                vtx.setValue(lx, h, ly);
+                break;
+            default:
+                vtx.setValue(lx, ly, h);
+                break;
+        }
+        vtx *= m_localScaling;
+        m_vertexCache[static_cast<std::size_t>(y) * m_heightStickWidth + x] = vtx;
+    }
+
+    // Update cached quad extents for the 4 quads that touch this vertex (if enabled)
+    if (m_useQuadExtentsCache && !m_quadExtents.empty()) {
+        const int wQuads = m_heightStickWidth - 1;
+        const int lQuads = m_heightStickLength - 1;
+        for (int qz = y - 1; qz <= y; ++qz) {
+            for (int qx = x - 1; qx <= x; ++qx) {
+                if (qx < 0 || qz < 0 || qx >= wQuads || qz >= lQuads)
+                    continue;
+                const cbtScalar h00 = getRawHeightFieldValue(qx, qz) * m_heightScale - m_localOrigin[m_upAxis];
+                const cbtScalar h10 = getRawHeightFieldValue(qx + 1, qz) * m_heightScale - m_localOrigin[m_upAxis];
+                const cbtScalar h01 = getRawHeightFieldValue(qx, qz + 1) * m_heightScale - m_localOrigin[m_upAxis];
+                const cbtScalar h11 = getRawHeightFieldValue(qx + 1, qz + 1) * m_heightScale - m_localOrigin[m_upAxis];
+                QuadExtents e;
+                e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
+                e.maxH = cbtMax(cbtMax(h00, h10), cbtMax(h01, h11));
+                m_quadExtents[static_cast<std::size_t>(qz) * wQuads + qx] = e;
+            }
+        }
+    }
+
+    // Update accelerator (conservative: rebuild whole accelerator for now)
     if (m_vboundsChunkSize > 0) {
         // Optionally: rebuild only affected chunks
         buildAccelerator(m_vboundsChunkSize);
@@ -310,10 +408,8 @@ void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights
         m_heightfieldData[i] = newHeights_absolute[i] - m_minHeight;
     }
 
-    buildVertexCache();
-    if (m_vboundsChunkSize > 0) {
-        buildAccelerator(m_vboundsChunkSize);
-    }
+    // Rebuild/refresh any dependent caches (vertex cache, quad extents cache, accelerator)
+    rebuildCaches();
 }
 
 // accelerator build/clear
@@ -357,6 +453,8 @@ void cbtHeightfieldChronoTerrainShape::clearAccelerator() {
 }
 
 void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
+    if (!m_useQuadExtentsCache)
+        return;
     const int w = m_heightStickWidth - 1;
     const int l = m_heightStickLength - 1;
     m_quadExtents.resize(static_cast<std::size_t>(w) * l);
@@ -381,6 +479,8 @@ void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
 // ---------------------------------------------------------------------------
 
 void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
+    if (!m_useVertexCache)
+        return;
     const int W = m_heightStickWidth;
     const int L = m_heightStickLength;
     m_vertexCache.resize(static_cast<std::size_t>(W) * L);
