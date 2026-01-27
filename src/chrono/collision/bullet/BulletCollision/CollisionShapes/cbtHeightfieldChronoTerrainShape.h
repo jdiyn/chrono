@@ -171,6 +171,32 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     void buildAccelerator(int chunkSize);
     void clearAccelerator();
 
+    bool hasAccelerator() const {
+        return m_vboundsChunkSize > 0 && m_vboundsGrid.size() != 0 && m_vboundsGridWidth > 0 && m_vboundsGridLength > 0;
+    }
+    int getAcceleratorChunkSize() const {
+        return m_vboundsChunkSize;
+    }
+    int getAcceleratorGridWidth() const {
+        return m_vboundsGridWidth;
+    }
+    int getAcceleratorGridLength() const {
+        return m_vboundsGridLength;
+    }
+
+    // Chunk height range, in scaled heightfield-local units (includes up-axis localScaling).
+    bool getChunkHeightRangeScaled(int chunkX, int chunkZ, cbtScalar& outMinH, cbtScalar& outMaxH) const {
+        if (!hasAccelerator())
+            return false;
+        if (chunkX < 0 || chunkZ < 0 || chunkX >= m_vboundsGridWidth || chunkZ >= m_vboundsGridLength)
+            return false;
+        const Range& r = m_vboundsGrid[chunkX + chunkZ * m_vboundsGridWidth];
+        const cbtScalar sUp = m_localScaling[m_upAxis];
+        outMinH = r.min * sUp;
+        outMaxH = r.max * sUp;
+        return true;
+    }
+
     // assumes the user handles whether the chunk exists or not
     const Range& GetVBoundsChunk(int cx, int cz) const {
         return m_vboundsGrid[cx + cz * m_vboundsGridWidth];
@@ -336,7 +362,8 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // caching vertices
     std::vector<cbtVector3> m_vertexCache;  // (width  × length) grid
     void buildVertexCache();                // rebuild when data or scaling changes! user need to manage
-    bool m_useVertexCache{true};
+    // Vertex cache is large; default OFF for big tiled worlds.
+    bool m_useVertexCache{false};
 
     void updateInverseLocalScaling();
     // TODO:: set a public function rebuildcache to build quad extents and verteces

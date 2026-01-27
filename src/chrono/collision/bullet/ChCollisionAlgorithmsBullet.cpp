@@ -1763,10 +1763,6 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
 
-    // We generate a fresh small manifold each frame (2-4 points max) to keep contacts stable
-    // for large shapes without keeping lots of stale points around.
-    resultOut->getPersistentManifold()->clearManifold();
-
     const bool convexIsA = (wrapperA->getCollisionShape() == m_convex);
     const cbtCollisionObjectWrapper* convexWrap = convexIsA ? wrapperA : wrapperB;
     const cbtCollisionObjectWrapper* terrainWrap = convexIsA ? wrapperB : wrapperA;
@@ -1807,14 +1803,18 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     cbtScalar minUp = SIMD_INFINITY, maxUp = -SIMD_INFINITY;
 
     const cbtVector3 corners[8] = {
-        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMin.z()), cbtVector3(aabbMax.x(), aabbMin.y(), aabbMin.z()),
-        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMin.z()), cbtVector3(aabbMax.x(), aabbMax.y(), aabbMin.z()),
-        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMax.z()), cbtVector3(aabbMax.x(), aabbMin.y(), aabbMax.z()),
-        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMax.z()), cbtVector3(aabbMax.x(), aabbMax.y(), aabbMax.z())};
+        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMin.z()),
+        cbtVector3(aabbMax.x(), aabbMin.y(), aabbMin.z()),
+        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMin.z()),
+        cbtVector3(aabbMax.x(), aabbMax.y(), aabbMin.z()),
+        cbtVector3(aabbMin.x(), aabbMin.y(), aabbMax.z()),
+        cbtVector3(aabbMax.x(), aabbMin.y(), aabbMax.z()),
+        cbtVector3(aabbMin.x(), aabbMax.y(), aabbMax.z()),
+        cbtVector3(aabbMax.x(), aabbMax.y(), aabbMax.z())};
 
     for (const cbtVector3& c : corners) {
-        cbtVector3 local = invTerrain * c;           // scaled terrain local
-        cbtVector3 unscaled = local * invS;          // grid coordinates
+        const cbtVector3 local = invTerrain * c;    // scaled terrain local
+        const cbtVector3 unscaled = local * invS;   // unscaled terrain local (grid units)
         minU = cbtMin(minU, unscaled[axisU]);
         maxU = cbtMax(maxU, unscaled[axisU]);
         minV = cbtMin(minV, unscaled[axisV]);
@@ -1878,7 +1878,7 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     };
 
     cbtVector3 tempVert;
-    auto getVert = [&](int x, int z) -> const cbtVector3& {
+    auto getVert = [&](int x, int z) -> cbtVector3 {
         if (!vcache.empty())
             return vcache[static_cast<std::size_t>(z) * W + x];
         terrainShape->getVertexAt(x, z, tempVert);
@@ -2055,13 +2055,12 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         cbtDiscreteCollisionDetectorInterface::ClosestPointInput input;
         input.m_maximumDistanceSquared = cutoff2;
 
-        for (int z = gz0; z <= gz1; ++z) {
-            for (int x = gx0; x <= gx1; ++x) {
+        auto processQuad = [&](int x, int z) {
             cbtScalar quadMinH, quadMaxH;
             if (!terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH))
-                continue;
+                return;
             if (minUp > quadMaxH + cutoff || maxUp < quadMinH - cutoff)
-                continue;
+                return;
 
             cbtVector3 v00 = getVert(x, z);
             cbtVector3 v10 = getVert(x + 1, z);
@@ -2073,8 +2072,8 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
             const cbtVector3 triA1 = v10;
             const cbtVector3 triA2 = alt ? v11 : v01;
             const cbtVector3 triB0 = alt ? v00 : v10;
-            const cbtVector3 triB1 = alt ? v11 : v11;
-            const cbtVector3 triB2 = alt ? v01 : v01;
+            const cbtVector3 triB1 = v11;
+            const cbtVector3 triB2 = v01;
 
             const cbtVector3 tris[2][3] = {{triA0, triA1, triA2}, {triB0, triB1, triB2}};
 
@@ -2086,8 +2085,6 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
                 cbtTriangleShape triShape(w0, w1, w2);
                 triShape.setMargin(terrainMargin);
 
-                // Cheap plane-distance cull: if the convex support point along -n is farther than cutoff
-                // from the triangle plane, there is no possible contact.
                 cbtVector3 triNormal = (w1 - w0).cross(w2 - w0);
                 if (triNormal.length2() < SIMD_EPSILON)
                     continue;
@@ -2116,9 +2113,38 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
                 cbtVector3 n = output.m_normalOnBInWorld;
                 pushCandidate(n, output.m_pointInWorld, dist);
             }
-        }
-    }
+        };
 
+        const int chunkSize = terrainShape->getAcceleratorChunkSize();
+        if (terrainShape->hasAccelerator() && chunkSize > 0) {
+            const int cX0 = gx0 / chunkSize;
+            const int cX1 = gx1 / chunkSize;
+            const int cZ0 = gz0 / chunkSize;
+            const int cZ1 = gz1 / chunkSize;
+
+            for (int cZ = cZ0; cZ <= cZ1; ++cZ) {
+                for (int cX = cX0; cX <= cX1; ++cX) {
+                    cbtScalar chunkMinH, chunkMaxH;
+                    if (terrainShape->getChunkHeightRangeScaled(cX, cZ, chunkMinH, chunkMaxH)) {
+                        if (minUp > chunkMaxH + cutoff || maxUp < chunkMinH - cutoff)
+                            continue;
+                    }
+
+                    const int zStart = cbtMax(gz0, cZ * chunkSize);
+                    const int zEnd = cbtMin(gz1, cbtMin((cZ + 1) * chunkSize - 1, L - 2));
+                    const int xStart = cbtMax(gx0, cX * chunkSize);
+                    const int xEnd = cbtMin(gx1, cbtMin((cX + 1) * chunkSize - 1, W - 2));
+
+                    for (int z = zStart; z <= zEnd; ++z)
+                        for (int x = xStart; x <= xEnd; ++x)
+                            processQuad(x, z);
+                }
+            }
+        } else {
+            for (int z = gz0; z <= gz1; ++z)
+                for (int x = gx0; x <= gx1; ++x)
+                    processQuad(x, z);
+        }
     }
 
     if (candidates.size() == 0)
@@ -2165,6 +2191,7 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     for (int i = 0; i < finalContacts.size(); ++i) {
         resultOut->addContactPoint(finalContacts[i].normalOnB, finalContacts[i].pointOnB, finalContacts[i].distance);
     }
+
     resultOut->refreshContactPoints();
 }
 
@@ -2279,10 +2306,6 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
 
-    // Only want one fresh contact per sphere/terrain pair. Keeping old contacts around can produce
-    // solver artifacts (especially noticeable with rolling friction)
-    resultOut->getPersistentManifold()->clearManifold();
-
     // Figure out which wrapper is the sphere and which is the terrain
     const bool sphereIsA = (wrapperA->getCollisionShape() == m_convex);
     const cbtCollisionObjectWrapper* sphereWrap = sphereIsA ? wrapperA : wrapperB;
@@ -2370,25 +2393,103 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     // Search a local neighborhood of quads, test both triangles and compute the closest point on the triangle
     // to the sphere center. Then keep the best (smallest distance)
     const auto& vcache = terrainShape->getVertexCache();
-    if ((int)vcache.size() < W * L)
-        return;
+    cbtVector3 tmpVert;
+    auto getVert = [&](int x, int z) -> cbtVector3 {
+        if (!vcache.empty())
+            return vcache[static_cast<std::size_t>(z) * W + x];
+        terrainShape->getVertexAt(x, z, tmpVert);
+        return tmpVert;
+    };
 
     // Cheap prune: each quad has a cached min/max height (along up-axis) <- if dynamic heightfield, this may will need updating.
     // If the sphere center is way above or below that range (with cutoff) then neither triangle in that quad can be the closest contact
+    const int x0 = cbtMax(0, cx - rU);
+    const int x1 = cbtMin(W - 2, cx + rU);
+    const int z0 = cbtMax(0, cz - rV);
+    const int z1 = cbtMin(L - 2, cz + rV);
+
     const cbtScalar sphereUp = sphereCenterLocal[upAxis];
-    for (int z = cbtMax(0, cz - rV); z <= cbtMin(L - 2, cz + rV); ++z) {
-        for (int x = cbtMax(0, cx - rU); x <= cbtMin(W - 2, cx + rU); ++x) {
+    const int chunkSize = terrainShape->getAcceleratorChunkSize();
+
+    if (terrainShape->hasAccelerator() && chunkSize > 0) {
+        const int cX0 = x0 / chunkSize;
+        const int cX1 = x1 / chunkSize;
+        const int cZ0 = z0 / chunkSize;
+        const int cZ1 = z1 / chunkSize;
+
+        for (int cZ = cZ0; cZ <= cZ1; ++cZ) {
+            for (int cX = cX0; cX <= cX1; ++cX) {
+                cbtScalar chunkMinH, chunkMaxH;
+                if (terrainShape->getChunkHeightRangeScaled(cX, cZ, chunkMinH, chunkMaxH)) {
+                    if (sphereUp > chunkMaxH + cutoff || sphereUp < chunkMinH - cutoff)
+                        continue;
+                }
+
+                const int zStart = cbtMax(z0, cZ * chunkSize);
+                const int zEnd = cbtMin(z1, cbtMin((cZ + 1) * chunkSize - 1, L - 2));
+                const int xStart = cbtMax(x0, cX * chunkSize);
+                const int xEnd = cbtMin(x1, cbtMin((cX + 1) * chunkSize - 1, W - 2));
+
+                for (int z = zStart; z <= zEnd; ++z) {
+                    for (int x = xStart; x <= xEnd; ++x) {
+                        cbtScalar quadMinH, quadMaxH;
+                        if (terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH)) {
+                            if (sphereUp > quadMaxH + cutoff || sphereUp < quadMinH - cutoff)
+                                continue;
+                        }
+
+                        const cbtVector3 v00 = getVert(x, z);
+                        const cbtVector3 v10 = getVert(x + 1, z);
+                        const cbtVector3 v01 = getVert(x, z + 1);
+                        const cbtVector3 v11 = getVert(x + 1, z + 1);
+
+                        const bool alt = terrainShape->useAlternateDiagonal(x, z);
+
+                        auto testTri = [&](const cbtVector3& a, const cbtVector3& b, const cbtVector3& c) {
+                            const cbtVector3 q =
+                                cbtHeightfieldChronoTerrainShape::ClosestPointOnTriangle(sphereCenterLocal, a, b, c);
+                            const cbtVector3 d = sphereCenterLocal - q;
+                            const cbtScalar d2 = d.length2();
+                            if (d2 < bestDist2) {
+                                bestDist2 = d2;
+                                bestPointLocal = q;
+                                bestDeltaLocal = d;
+
+                                cbtVector3 n = (b - a).cross(c - a);
+                                if (n.length2() > SIMD_EPSILON) {
+                                    n.normalize();
+                                    bestTriNormalLocal = n;
+                                } else {
+                                    bestTriNormalLocal.setValue(0, 0, 0);
+                                    bestTriNormalLocal[upAxis] = cbtScalar(1);
+                                }
+                            }
+                        };
+
+                        if (alt) {
+                            testTri(v00, v10, v11);
+                            testTri(v00, v11, v01);
+                        } else {
+                            testTri(v00, v10, v01);
+                            testTri(v10, v11, v01);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for (int z = z0; z <= z1; ++z) {
+            for (int x = x0; x <= x1; ++x) {
             cbtScalar quadMinH, quadMaxH;
             if (terrainShape->getQuadHeightRangeScaled(x, z, quadMinH, quadMaxH)) {
                 if (sphereUp > quadMaxH + cutoff || sphereUp < quadMinH - cutoff)
                     continue;
             }
 
-            cbtVector3 v00, v10, v01, v11;
-            v00 = vcache[static_cast<std::size_t>(z) * W + x];
-            v10 = vcache[static_cast<std::size_t>(z) * W + (x + 1)];
-            v01 = vcache[static_cast<std::size_t>(z + 1) * W + x];
-            v11 = vcache[static_cast<std::size_t>(z + 1) * W + (x + 1)];
+            const cbtVector3 v00 = getVert(x, z);
+            const cbtVector3 v10 = getVert(x + 1, z);
+            const cbtVector3 v01 = getVert(x, z + 1);
+            const cbtVector3 v11 = getVert(x + 1, z + 1);
 
             const bool alt = terrainShape->useAlternateDiagonal(x, z);
 
@@ -2423,6 +2524,7 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
             } else {
                 testTri(v00, v10, v01);
                 testTri(v10, v11, v01);
+            }
             }
         }
     }
