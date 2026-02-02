@@ -279,6 +279,20 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
 
     updateInverseLocalScaling();
 
+    // Auto-enable caching based on terrain size
+    const int totalVertices = m_heightStickWidth * m_heightStickLength;
+    
+    if (totalVertices <= m_autoCacheThreshold) {
+        // Small terrain: use flat vertex cache (fast, fits in memory)
+        m_useVertexCache = true;
+    } else if (totalVertices > 1024 * 1024) {
+        // Large terrain (1024x1024+): use tiled cache with LOD
+        // This avoids ~48MB+ memory usage while keeping nearby tiles fast
+        setUseTiledCache(true, DEFAULT_TILE_SIZE);
+    }
+    // Medium terrains (512x512 to 1024x1024) don't use vertex cache by default
+    // They can still be fast with quad extents + on-the-fly vertex computation
+
     // build caching first time
     if (m_useQuadExtentsCache)
         buildQuadExtents();
@@ -322,59 +336,24 @@ void cbtHeightfieldChronoTerrainShape::getAabb(const cbtTransform& tr, cbtVector
     aabbMax = worldCenter + worldExtents;
 }
 
-// Untested - dynamic height update
+// Efficient single-vertex height update using region-based cache updates
 void cbtHeightfieldChronoTerrainShape::updateHeight(int x, int y, cbtScalar newHeight_absolute) {
     cbtAssert(x >= 0 && x < m_heightStickWidth && y >= 0 && y < m_heightStickLength);
 
     // Convert absolute height to base-relative
     m_heightfieldData[y * m_heightStickWidth + x] = newHeight_absolute - m_minHeight;
 
-    // Update cached vertex (if enabled)
-    if (m_useVertexCache && !m_vertexCache.empty()) {
-        const cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
-        const cbtScalar lx = (-m_width * cbtScalar(0.5)) + cbtScalar(x);
-        const cbtScalar ly = (-m_length * cbtScalar(0.5)) + cbtScalar(y);
-        cbtVector3 vtx;
-        switch (m_upAxis) {
-            case 0:
-                vtx.setValue(h, lx, ly);
-                break;
-            case 1:
-                vtx.setValue(lx, h, ly);
-                break;
-            default:
-                vtx.setValue(lx, ly, h);
-                break;
-        }
-        vtx *= m_localScaling;
-        m_vertexCache[static_cast<std::size_t>(y) * m_heightStickWidth + x] = vtx;
-    }
+    // Update caches using efficient region-based methods
+    if (m_useVertexCache && !m_vertexCache.empty())
+        rebuildVertexCacheRegion(x, y, x, y);
+    
+    // Quad extents: update the 4 quads that share this vertex
+    if (m_useQuadExtentsCache && !m_quadExtents.empty())
+        rebuildQuadExtentsRegion(x > 0 ? x - 1 : 0, y > 0 ? y - 1 : 0, x, y);
 
-    // Update cached quad extents for the 4 quads that touch this vertex (if enabled)
-    if (m_useQuadExtentsCache && !m_quadExtents.empty()) {
-        const int wQuads = m_heightStickWidth - 1;
-        const int lQuads = m_heightStickLength - 1;
-        for (int qz = y - 1; qz <= y; ++qz) {
-            for (int qx = x - 1; qx <= x; ++qx) {
-                if (qx < 0 || qz < 0 || qx >= wQuads || qz >= lQuads)
-                    continue;
-                const cbtScalar h00 = getRawHeightFieldValue(qx, qz) * m_heightScale - m_localOrigin[m_upAxis];
-                const cbtScalar h10 = getRawHeightFieldValue(qx + 1, qz) * m_heightScale - m_localOrigin[m_upAxis];
-                const cbtScalar h01 = getRawHeightFieldValue(qx, qz + 1) * m_heightScale - m_localOrigin[m_upAxis];
-                const cbtScalar h11 = getRawHeightFieldValue(qx + 1, qz + 1) * m_heightScale - m_localOrigin[m_upAxis];
-                QuadExtents e;
-                e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
-                e.maxH = cbtMax(cbtMax(h00, h10), cbtMax(h01, h11));
-                m_quadExtents[static_cast<std::size_t>(qz) * wQuads + qx] = e;
-            }
-        }
-    }
-
-    // Update accelerator (conservative: rebuild whole accelerator for now)
-    if (m_vboundsChunkSize > 0) {
-        // Optionally: rebuild only affected chunks
-        buildAccelerator(m_vboundsChunkSize);
-    }
+    // Update accelerator chunks affected by this vertex
+    if (m_vboundsChunkSize > 0)
+        updateAcceleratorRegion(x, y, x, y);
 }
 
 void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights_absolute, int numSamples) {
@@ -386,6 +365,364 @@ void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights
 
     // Rebuild/refresh any dependent caches (vertex cache, quad extents cache, accelerator)
     rebuildCaches();
+}
+
+// ---------------------------------------------------------------------------
+// Region-based height update for efficient partial terrain modification
+// ---------------------------------------------------------------------------
+
+void cbtHeightfieldChronoTerrainShape::updateHeightRegion(int x0, int z0, int x1, int z1, 
+                                                           const cbtScalar* newHeights_absolute) {
+    // Clamp bounds
+    x0 = cbtMax(0, x0);
+    z0 = cbtMax(0, z0);
+    x1 = cbtMin(m_heightStickWidth - 1, x1);
+    z1 = cbtMin(m_heightStickLength - 1, z1);
+    
+    if (x1 < x0 || z1 < z0)
+        return;
+    
+    // Update raw height data in region
+    const int regionW = x1 - x0 + 1;
+    for (int z = z0; z <= z1; ++z) {
+        for (int x = x0; x <= x1; ++x) {
+            const int srcIdx = (z - z0) * regionW + (x - x0);
+            const int dstIdx = z * m_heightStickWidth + x;
+            m_heightfieldData[dstIdx] = newHeights_absolute[srcIdx] - m_minHeight;
+        }
+    }
+    
+    // Update caches for affected region only
+    if (m_useVertexCache && !m_vertexCache.empty())
+        rebuildVertexCacheRegion(x0, z0, x1, z1);
+    
+    if (m_useQuadExtentsCache && !m_quadExtents.empty())
+        rebuildQuadExtentsRegion(x0 > 0 ? x0 - 1 : 0, z0 > 0 ? z0 - 1 : 0, x1, z1);
+    
+    if (m_vboundsChunkSize > 0)
+        updateAcceleratorRegion(x0, z0, x1, z1);
+}
+
+void cbtHeightfieldChronoTerrainShape::markRegionDirty(int x0, int z0, int x1, int z1) {
+    // Clamp and validate
+    x0 = cbtMax(0, x0);
+    z0 = cbtMax(0, z0);
+    x1 = cbtMin(m_heightStickWidth - 1, x1);
+    z1 = cbtMin(m_heightStickLength - 1, z1);
+    
+    if (x1 < x0 || z1 < z0)
+        return;
+    
+    // Try to merge with existing dirty regions
+    for (auto& dr : m_dirtyRegions) {
+        // Check if regions overlap or are adjacent
+        if (x0 <= dr.x1 + 1 && x1 >= dr.x0 - 1 && z0 <= dr.z1 + 1 && z1 >= dr.z0 - 1) {
+            // Merge into existing region
+            dr.x0 = cbtMin(dr.x0, x0);
+            dr.z0 = cbtMin(dr.z0, z0);
+            dr.x1 = cbtMax(dr.x1, x1);
+            dr.z1 = cbtMax(dr.z1, z1);
+            return;
+        }
+    }
+    
+    // Add as new dirty region
+    m_dirtyRegions.push_back({x0, z0, x1, z1});
+}
+
+void cbtHeightfieldChronoTerrainShape::flushDirtyRegions() {
+    if (m_dirtyRegions.empty())
+        return;
+    
+    for (const auto& dr : m_dirtyRegions) {
+        if (m_useVertexCache && !m_vertexCache.empty())
+            rebuildVertexCacheRegion(dr.x0, dr.z0, dr.x1, dr.z1);
+        
+        if (m_useQuadExtentsCache && !m_quadExtents.empty())
+            rebuildQuadExtentsRegion(dr.x0 > 0 ? dr.x0 - 1 : 0, 
+                                     dr.z0 > 0 ? dr.z0 - 1 : 0, 
+                                     dr.x1, dr.z1);
+        
+        if (m_vboundsChunkSize > 0)
+            updateAcceleratorRegion(dr.x0, dr.z0, dr.x1, dr.z1);
+    }
+    
+    m_dirtyRegions.clear();
+}
+
+void cbtHeightfieldChronoTerrainShape::rebuildVertexCacheRegion(int x0, int z0, int x1, int z1) {
+    if (!m_useVertexCache || m_vertexCache.empty())
+        return;
+    
+    const int W = m_heightStickWidth;
+    const int L = m_heightStickLength;
+    const cbtScalar dx = m_width / cbtScalar(W - 1);
+    const cbtScalar dy = m_length / cbtScalar(L - 1);
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    
+    for (int y = z0; y <= z1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
+            cbtScalar lx = x * dx - halfW;
+            cbtScalar ly = y * dy - halfL;
+            
+            cbtVector3 v;
+            switch (m_upAxis) {
+                case 0: v.setValue(h, lx, ly); break;
+                case 1: v.setValue(lx, h, ly); break;
+                default: v.setValue(lx, ly, h); break;
+            }
+            v *= m_localScaling;
+            m_vertexCache[static_cast<std::size_t>(y) * W + x] = v;
+        }
+    }
+}
+
+void cbtHeightfieldChronoTerrainShape::rebuildQuadExtentsRegion(int x0, int z0, int x1, int z1) {
+    if (!m_useQuadExtentsCache || m_quadExtents.empty())
+        return;
+    
+    const int wQuads = m_heightStickWidth - 1;
+    const int lQuads = m_heightStickLength - 1;
+    
+    // Clamp to valid quad range
+    x0 = cbtMax(0, x0);
+    z0 = cbtMax(0, z0);
+    x1 = cbtMin(wQuads - 1, x1);
+    z1 = cbtMin(lQuads - 1, z1);
+    
+    for (int z = z0; z <= z1; ++z) {
+        for (int x = x0; x <= x1; ++x) {
+            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+            
+            QuadExtents e;
+            e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
+            e.maxH = cbtMax(cbtMax(h00, h10), cbtMax(h01, h11));
+            m_quadExtents[static_cast<std::size_t>(z) * wQuads + x] = e;
+        }
+    }
+}
+
+void cbtHeightfieldChronoTerrainShape::updateAcceleratorRegion(int x0, int z0, int x1, int z1) {
+    if (!hasAccelerator())
+        return;
+    
+    // Find affected chunks
+    const int cX0 = x0 / m_vboundsChunkSize;
+    const int cX1 = x1 / m_vboundsChunkSize;
+    const int cZ0 = z0 / m_vboundsChunkSize;
+    const int cZ1 = z1 / m_vboundsChunkSize;
+    
+    for (int cz = cZ0; cz <= cZ1 && cz < m_vboundsGridLength; ++cz) {
+        for (int cx = cX0; cx <= cX1 && cx < m_vboundsGridWidth; ++cx) {
+            // Rebuild this chunk's min/max
+            int chunkX0 = cx * m_vboundsChunkSize;
+            int chunkZ0 = cz * m_vboundsChunkSize;
+            
+            Range r;
+            int sx = std::min(chunkX0, m_heightStickWidth - 1);
+            int sz = std::min(chunkZ0, m_heightStickLength - 1);
+            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale - m_localOrigin[m_upAxis];
+            r.min = r.max = h0;
+            
+            for (int zz = chunkZ0; zz < chunkZ0 + m_vboundsChunkSize + 1 && zz < m_heightStickLength; ++zz) {
+                for (int xx = chunkX0; xx < chunkX0 + m_vboundsChunkSize + 1 && xx < m_heightStickWidth; ++xx) {
+                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale - m_localOrigin[m_upAxis];
+                    r.min = cbtMin(r.min, h);
+                    r.max = cbtMax(r.max, h);
+                }
+            }
+            m_vboundsGrid[cx + cz * m_vboundsGridWidth] = r;
+        }
+    }
+}
+
+// ============================================================================
+// TILED LOD VERTEX CACHE - for large terrains (2048x2048+)
+// ============================================================================
+// Divides terrain into tiles (e.g., 64x64), caches only nearby tiles at full
+// resolution. Distant tiles use lower LOD or aren't cached.
+
+void cbtHeightfieldChronoTerrainShape::setUseTiledCache(bool enable, int tileSize) {
+    m_useTiledCache = enable;
+    m_tileSize = tileSize;
+    
+    if (enable) {
+        // Disable flat vertex cache when using tiled
+        m_useVertexCache = false;
+        m_vertexCache.clear();
+        
+        // Calculate tile grid dimensions
+        m_tileCountX = (m_heightStickWidth + tileSize - 1) / tileSize;
+        m_tileCountZ = (m_heightStickLength + tileSize - 1) / tileSize;
+        
+        // Allocate tile array (tiles are populated on demand)
+        m_tiledCache.resize(m_tileCountX * m_tileCountZ);
+        for (auto& tile : m_tiledCache) {
+            tile.valid = false;
+            tile.lodLevel = -1;
+        }
+        
+        m_lastCacheCenterTileX = -1;
+        m_lastCacheCenterTileZ = -1;
+    } else {
+        m_tiledCache.clear();
+        m_tileCountX = 0;
+        m_tileCountZ = 0;
+    }
+}
+
+void cbtHeightfieldChronoTerrainShape::buildTileCache(int tileX, int tileZ, int lodLevel) {
+    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ)
+        return;
+    
+    CachedTile& tile = m_tiledCache[tileZ * m_tileCountX + tileX];
+    
+    // LOD step: 1 = full res, 2 = half res, 4 = quarter res, etc.
+    const int lodStep = 1 << lodLevel;
+    const int effectiveTileSize = (m_tileSize + lodStep - 1) / lodStep;
+    
+    tile.vertices.resize(effectiveTileSize * effectiveTileSize);
+    tile.lodLevel = lodLevel;
+    tile.tileX = tileX;
+    tile.tileZ = tileZ;
+    
+    const int W = m_heightStickWidth;
+    const int L = m_heightStickLength;
+    const cbtScalar dx = m_width / cbtScalar(W - 1);
+    const cbtScalar dy = m_length / cbtScalar(L - 1);
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    
+    const int baseX = tileX * m_tileSize;
+    const int baseZ = tileZ * m_tileSize;
+    
+    for (int lz = 0; lz < effectiveTileSize; ++lz) {
+        for (int lx = 0; lx < effectiveTileSize; ++lx) {
+            int gx = baseX + lx * lodStep;
+            int gz = baseZ + lz * lodStep;
+            
+            // Clamp to grid bounds
+            gx = cbtMin(gx, W - 1);
+            gz = cbtMin(gz, L - 1);
+            
+            cbtScalar h = getRawHeightFieldValue(gx, gz) * m_heightScale;
+            cbtScalar px = gx * dx - halfW;
+            cbtScalar pz = gz * dy - halfL;
+            
+            cbtVector3 v;
+            switch (m_upAxis) {
+                case 0: v.setValue(h, px, pz); break;
+                case 1: v.setValue(px, h, pz); break;
+                default: v.setValue(px, pz, h); break;
+            }
+            v *= m_localScaling;
+            tile.vertices[lz * effectiveTileSize + lx] = v;
+        }
+    }
+    
+    tile.valid = true;
+}
+
+void cbtHeightfieldChronoTerrainShape::updateTileCacheAroundPosition(const cbtVector3& localPos) {
+    if (!m_useTiledCache || m_tileSize <= 0)
+        return;
+    
+    // Find which tile the position is in
+    int axisU, axisV;
+    getPlanarAxes(axisU, axisV);
+    
+    const cbtScalar halfW = m_width * cbtScalar(0.5);
+    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    
+    // Convert local position to grid coordinates
+    const cbtVector3 unscaled = localPos * m_invLocalScaling;
+    const cbtScalar gridX = (unscaled[axisU] + halfW) / (m_width / cbtScalar(m_heightStickWidth - 1));
+    const cbtScalar gridZ = (unscaled[axisV] + halfL) / (m_length / cbtScalar(m_heightStickLength - 1));
+    
+    const int centerTileX = cbtMax(0, cbtMin(static_cast<int>(gridX) / m_tileSize, m_tileCountX - 1));
+    const int centerTileZ = cbtMax(0, cbtMin(static_cast<int>(gridZ) / m_tileSize, m_tileCountZ - 1));
+    
+    // Skip if we haven't moved to a new tile
+    if (centerTileX == m_lastCacheCenterTileX && centerTileZ == m_lastCacheCenterTileZ)
+        return;
+    
+    m_lastCacheCenterTileX = centerTileX;
+    m_lastCacheCenterTileZ = centerTileZ;
+    
+    // Invalidate tiles outside the new cache radius
+    for (int tz = 0; tz < m_tileCountZ; ++tz) {
+        for (int tx = 0; tx < m_tileCountX; ++tx) {
+            const int distX = std::abs(tx - centerTileX);
+            const int distZ = std::abs(tz - centerTileZ);
+            const int dist = cbtMax(distX, distZ);  // Chebyshev distance
+            
+            CachedTile& tile = m_tiledCache[tz * m_tileCountX + tx];
+            
+            if (dist > m_tileCacheRadius * 2) {
+                // Far away - invalidate
+                tile.valid = false;
+                tile.vertices.clear();
+                tile.vertices.shrink_to_fit();
+            } else if (dist <= m_tileCacheRadius) {
+                // Close - full resolution
+                if (!tile.valid || tile.lodLevel != 0) {
+                    buildTileCache(tx, tz, 0);
+                }
+            } else if (dist <= m_tileCacheRadius * 2) {
+                // Medium distance - LOD 1 (half res)
+                if (!tile.valid || tile.lodLevel != 1) {
+                    buildTileCache(tx, tz, 1);
+                }
+            }
+        }
+    }
+}
+
+bool cbtHeightfieldChronoTerrainShape::getVertexFromTiledCache(int x, int z, cbtVector3& outVertex) const {
+    if (!m_useTiledCache || m_tiledCache.empty())
+        return false;
+    
+    const int tileX = x / m_tileSize;
+    const int tileZ = z / m_tileSize;
+    
+    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ)
+        return false;
+    
+    const CachedTile& tile = m_tiledCache[tileZ * m_tileCountX + tileX];
+    if (!tile.valid)
+        return false;
+    
+    const int lodStep = 1 << tile.lodLevel;
+    const int localX = (x - tileX * m_tileSize) / lodStep;
+    const int localZ = (z - tileZ * m_tileSize) / lodStep;
+    const int effectiveTileSize = (m_tileSize + lodStep - 1) / lodStep;
+    
+    if (localX < 0 || localZ < 0 || localX >= effectiveTileSize || localZ >= effectiveTileSize)
+        return false;
+    
+    outVertex = tile.vertices[localZ * effectiveTileSize + localX];
+    return true;
+}
+
+void cbtHeightfieldChronoTerrainShape::invalidateTilesInRegion(int x0, int z0, int x1, int z1) {
+    if (!m_useTiledCache)
+        return;
+    
+    const int tx0 = cbtMax(0, x0 / m_tileSize);
+    const int tz0 = cbtMax(0, z0 / m_tileSize);
+    const int tx1 = cbtMin(m_tileCountX - 1, x1 / m_tileSize);
+    const int tz1 = cbtMin(m_tileCountZ - 1, z1 / m_tileSize);
+    
+    for (int tz = tz0; tz <= tz1; ++tz) {
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            m_tiledCache[tz * m_tileCountX + tx].valid = false;
+        }
+    }
 }
 
 // accelerator build/clear

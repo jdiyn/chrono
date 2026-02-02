@@ -311,6 +311,59 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // Future: Method to update heights dynamically
     void updateHeight(int x, int y, cbtScalar newHeight_absolute);
     void updateHeights(const cbtScalar* newHeights_absolute, int numSamples);
+    
+    /// Update heights in a rectangular region efficiently
+    void updateHeightRegion(int x0, int z0, int x1, int z1, const cbtScalar* newHeights_absolute);
+    
+    /// Mark a region as dirty for deferred cache rebuild
+    void markRegionDirty(int x0, int z0, int x1, int z1);
+    
+    /// Flush all dirty regions and rebuild affected caches
+    void flushDirtyRegions();
+    
+    /// Check if any regions need cache updates
+    bool hasDirtyRegions() const { return !m_dirtyRegions.empty(); }
+    
+    /// Get/set auto vertex cache threshold (enable vertex cache if terrain <= this size)
+    static constexpr int DEFAULT_AUTO_CACHE_THRESHOLD = 512 * 512;  // ~1MB for 256KB terrains
+    void setAutoCacheThreshold(int maxVertices) { m_autoCacheThreshold = maxVertices; }
+    int getAutoCacheThreshold() const { return m_autoCacheThreshold; }
+    
+    // ========================================================================
+    // TILED LOD VERTEX CACHE - for large terrains (e.g., 2048x2048+)
+    // ========================================================================
+    // Instead of caching all vertices (which would be ~48MB for 2048x2048),
+    // we divide the terrain into tiles and cache only nearby tiles at full res.
+    // Distant tiles can be at lower LOD or not cached at all.
+    
+    static constexpr int DEFAULT_TILE_SIZE = 64;       // 64x64 vertices per tile
+    static constexpr int DEFAULT_TILE_CACHE_RADIUS = 4; // Cache tiles within 4-tile radius
+    
+    struct CachedTile {
+        std::vector<cbtVector3> vertices;  // tileSize × tileSize vertices
+        int lodLevel;                       // 0 = full res, 1 = half res, etc.
+        int tileX, tileZ;                   // Tile coordinates
+        bool valid;
+    };
+    
+    /// Enable/disable tiled caching (for large terrains)
+    void setUseTiledCache(bool enable, int tileSize = DEFAULT_TILE_SIZE);
+    bool getUseTiledCache() const { return m_useTiledCache; }
+    
+    /// Set the cache radius (how many tiles around query point to cache)
+    void setTileCacheRadius(int radius) { m_tileCacheRadius = radius; }
+    int getTileCacheRadius() const { return m_tileCacheRadius; }
+    
+    /// Update tile cache around a world position (call from collision detection)
+    void updateTileCacheAroundPosition(const cbtVector3& localPos);
+    
+    /// Get vertex from tiled cache (returns false if tile not cached)
+    bool getVertexFromTiledCache(int x, int z, cbtVector3& outVertex) const;
+    
+    /// Get tile dimensions
+    int getTileCountX() const { return m_tileCountX; }
+    int getTileCountZ() const { return m_tileCountZ; }
+    int getTileSize() const { return m_tileSize; }
 
 
   protected:
@@ -362,8 +415,37 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // caching vertices
     std::vector<cbtVector3> m_vertexCache;  // (width  × length) grid
     void buildVertexCache();                // rebuild when data or scaling changes! user need to manage
-    // Vertex cache is large; default OFF for big tiled worlds.
+    // Vertex cache is auto-enabled for smaller terrains (see m_autoCacheThreshold)
     bool m_useVertexCache{false};
+    
+    // Dirty region tracking for efficient partial updates
+    struct DirtyRegion {
+        int x0, z0, x1, z1;  // Inclusive bounds
+    };
+    std::vector<DirtyRegion> m_dirtyRegions;
+    int m_autoCacheThreshold{DEFAULT_AUTO_CACHE_THRESHOLD};
+    
+    // Rebuild only vertices in a region
+    void rebuildVertexCacheRegion(int x0, int z0, int x1, int z1);
+    // Rebuild only quad extents in a region  
+    void rebuildQuadExtentsRegion(int x0, int z0, int x1, int z1);
+    // Update accelerator chunks affected by a region
+    void updateAcceleratorRegion(int x0, int z0, int x1, int z1);
+    
+    // Tiled cache members
+    bool m_useTiledCache{false};
+    int m_tileSize{DEFAULT_TILE_SIZE};
+    int m_tileCacheRadius{DEFAULT_TILE_CACHE_RADIUS};
+    int m_tileCountX{0};
+    int m_tileCountZ{0};
+    std::vector<CachedTile> m_tiledCache;  // Flat array of tiles
+    int m_lastCacheCenterTileX{-1};
+    int m_lastCacheCenterTileZ{-1};
+    
+    // Build a single tile's vertex cache
+    void buildTileCache(int tileX, int tileZ, int lodLevel = 0);
+    // Invalidate tiles in a region
+    void invalidateTilesInRegion(int x0, int z0, int x1, int z1);
 
     void updateInverseLocalScaling();
     // TODO:: set a public function rebuildcache to build quad extents and verteces
