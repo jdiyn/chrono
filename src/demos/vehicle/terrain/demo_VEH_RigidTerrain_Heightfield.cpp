@@ -211,8 +211,8 @@ int main(int argc, char* argv[]) {
     // This demonstrates programmatic heightfield generation without external files
     
     // Perlin noise parameters
-    int perlinNx = 1024;
-    int perlinNy = 1024;
+    int perlinNx = 2056;
+    int perlinNy = 2056;
     double perlinWidth = 80.0;   // 80m x 80m patch
     double perlinLength = 80.0;
     double perlinAmplitude = 6.0;  // Max height variation in meters
@@ -302,6 +302,7 @@ int main(int argc, char* argv[]) {
     }
     
     // Second pass: rescale to [0, perlinAmplitude] using actual range
+    // This produces LOCAL heights (BASE-relative, min=0), matching Unreal/Unity terrain export format
     double noiseRange = noiseMax - noiseMin;
     if (noiseRange > 1e-9) {
         for (auto& h : perlin_heights) {
@@ -311,15 +312,35 @@ int main(int argc, char* argv[]) {
     
     std::cout << "Perlin noise range: [" << noiseMin << ", " << noiseMax << "] -> scaled to [0, " << perlinAmplitude << "]" << std::endl;
     
-    // Add the Perlin noise patch offset from the main terrain
+    // Add the Perlin noise patch using LOCAL heights (heightsAreLocal = true)
+    // This is how you'd import terrain from Unreal/Unity where heights are already BASE-relative
     auto perlinPatch = terrain.AddPatch(patch_mat, 
-                                         ChCoordsys<>(ChVector3d(0, 0, -6), QUNIT),  // Position offset
+                                         ChCoordsys<>(ChVector3d(0, 0, -6), QUNIT),  // Position offset (BASE sits at z=-6)
                                          perlin_heights,
                                          perlinNx, perlinNy,
                                          perlinWidth, perlinLength,
                                          0.001f,   // sweep sphere radius
-                                         true);    // build visual mesh
+                                         true,     // build visual mesh
+                                         true);    // heightsAreLocal=true: heights are already BASE-relative [0, amplitude]
     perlinPatch->SetColor(ChColor(0.6f, 0.55f, 0.4f));  // Sandy/dirt color
+    
+    // Example of ABSOLUTE heights (heightsAreLocal = false, default):
+    // If you had real-world elevation data like GPS altitudes (e.g., 500m to 550m),
+    // you'd pass heightsAreLocal=false and the system would automatically shift
+    // minHeight to local z=0. Uncomment below to see:
+    //
+    // std::vector<double> absolute_heights(64 * 64);
+    // for (int j = 0; j < 64; ++j) {
+    //     for (int i = 0; i < 64; ++i) {
+    //         // Simulate real elevation data (500m base + up to 50m variation)
+    //         double noise = fbm(i * 0.1, j * 0.1, 4, 0.5, 0.5);
+    //         absolute_heights[j * 64 + i] = 500.0 + (noise + 1.0) * 25.0;  // 500m to 550m
+    //     }
+    // }
+    // auto absolutePatch = terrain.AddPatch(patch_mat,
+    //                                       ChCoordsys<>(ChVector3d(50, 0, 0), QUNIT),  // BASE at z=0
+    //                                       absolute_heights, 64, 64, 20.0, 20.0,
+    //                                       0.001f, true, false);  // heightsAreLocal=false (default)
 
 
 

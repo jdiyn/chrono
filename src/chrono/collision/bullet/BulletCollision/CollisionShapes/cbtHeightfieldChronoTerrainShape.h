@@ -11,20 +11,23 @@
 // Authors: Josh Diyn
 // =============================================================================
 //
-// Optimized heightfield terrain shape for Chrono physics.
+// Optimised heightfield terrain shape for Chrono physics
 //
-// ## Performance Characteristics
+// ## Intended for high performance analytical collision response with large terrains
 // - Sphere collision: O(1) analytical with bilinear interpolation + ClosestPointOnTriangle
 // - Convex collision: O(1) height rejection + support sampling (26-42 directions)
 // - Ray queries: O(1) bilinear interpolation with gradient-based normals
 //
-// ## Coordinate Conventions
-// - **Local origin**: Center of the heightfield patch (planar dimensions centered)
-// - **Height range**: Heights are stored as absolute values; m_localHalfExtents.up() offsets
-//   the geometry so that minHeight maps to the bottom and maxHeight to the top
+// ## Coordinate Conventions (BASE-at-origin standard)
+// - **Height storage**: Heights in m_heightfieldData are BASE-relative (shifted by -minH
+//   in constructor). This means local height=0 corresponds to minHeight.
+// - **Planar origin**: Center of the heightfield patch (planar dimensions centered at 0)
+// - **Height range**: 0 to (maxHeight - minHeight) in local coordinates
 // - **Grid indexing**: Row-major [j * width + i] where i is along width axis
 // - **Up-axis**: 0=X-up, 1=Y-up, 2=Z-up (default Z)
 // - **Local scaling**: Applied after height lookup via m_localScaling vector
+//
+// Terrain Base/origin/ref sits at local z=0
 //
 // ## Caching Strategy
 // - Small heightfields (≤512×512): Flat vertex cache, rebuilt on dirty region
@@ -44,10 +47,11 @@
 #include <vector>
 
 // ============================================================================
-// SIMD SUPPORT FOR HEIGHTFIELD COLLISION OPTIMIZATION
+// SIMD SUPPORT FOR HEIGHTFIELD COLLISION OPTIMISATION
 // ============================================================================
-// Provides ~2x speedup for closest-point and bilinear calculations.
-// Falls back to scalar code on platforms without SSE support.
+// Speedup for closest-point and bilinear calculations
+// Falls back to scalar code on platforms without SSE support
+//  TODO: (Chrono has preprocessors definitions for this??)
 #if defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1)
     #define CBT_HF_USE_SIMD 1
     #include <xmmintrin.h>  // SSE
@@ -93,8 +97,8 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
   public:
     BT_DECLARE_ALIGNED_ALLOCATOR();
 
-    /// Closest point on triangle (Ericson, Real-Time Collision Detection).
-    /// SIMD-optimized on SSE platforms (~2x faster).
+    /// Closest point on triangle (Ericson, Real-Time Collision Detection)
+    /// SIMD-optimised on SSE platforms
     static inline cbtVector3 ClosestPointOnTriangle(const cbtVector3& p,
                                                     const cbtVector3& a,
                                                     const cbtVector3& b,
@@ -160,7 +164,7 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         return a + ab * v + ac * w;
     }
 
-    /// SIMD-accelerated bilinear interpolation of 4 heights.
+    /// SIMD-accelerated bilinear interpolation of 4 heights
     static inline cbtScalar BilinearHeight(cbtScalar h00, cbtScalar h10, cbtScalar h01, cbtScalar h11,
                                             cbtScalar tx, cbtScalar ty) {
 #if CBT_HF_USE_SIMD
@@ -186,7 +190,7 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
 #endif
     }
 
-    /// Return planar axis indices (u,v) for a given upAxis.
+    /// Return planar axis indices (u,v) for a given upAxis
     /// - upAxis=0 (X-up): u=Y, v=Z
     /// - upAxis=1 (Y-up): u=X, v=Z
     /// - upAxis=2 (Z-up): u=X, v=Y
@@ -229,6 +233,8 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     int getLength() const {
         return m_heightStickLength;
     }
+    /// Returns local origin - always (0,0,0) for BASE-at-origin convention.
+    /// Kept for API compatibility; heights in m_heightfieldData are already BASE-relative.
     const cbtVector3& getLocalOrigin() const {
         return m_localOrigin;
     }
@@ -492,10 +498,10 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     bool m_useDiamondSubdivision;
     bool m_useZigzagSubdivision;
 
-    // AABB in local (unscaled) coords
+    // AABB in local (unscaled) coords - BASE-at-origin means z starts at 0
     cbtVector3 m_localAabbMin;
     cbtVector3 m_localAabbMax;
-    cbtVector3 m_localOrigin;  // = 0.5*(min+max)
+    cbtVector3 m_localOrigin;  // Always (0,0,0) for BASE-at-origin convention (legacy member)
 
     // local scaling as just 1,1,1 for initialisation
     cbtVector3 m_localScaling{1, 1, 1};
@@ -556,8 +562,8 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     void invalidateTilesInRegion(int x0, int z0, int x1, int z1);
 
     void updateInverseLocalScaling();
-    // TODO:: set a public function rebuildcache to build quad extents and verteces
-    //// replicate Bullet’s getVertex (including centering by m_localOrigin)
+    /// Get vertex position at integer grid coordinates.
+    /// Heights are BASE-relative (minHeight at z=0), planar coords centered.
     void getVertex(int x, int y, cbtVector3& vertex) const;
 
     

@@ -842,16 +842,24 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 
 
 //----------------------------------------------------------------------------------------------
-//  Heightfield patch, j=0 type - note heights are entered directly, not scaled [0..1] type.
+//  Heightfield patch, j=0 type - note heights are entered directly in meters, not scaled [0..1]
+//  Heights can be provided as either one of the two approaches: Aboslute or Local
+//  - Absolute world heights (heightsAreLocal = false): eg. 100m to 150m elevation
+//    Internally shifted so minHeight becomes local z=0 (BASE at origin convention)
+//  - Local BASE-relative heights (heightsAreLocal = true): eg. 0m to 50m within the heightfield
+//    object. These are used directly in the shape, for matching Unity/Unreal where
+//    terrain base sits at z=0 within the local frame of the heightfield object
+//----------------------------------------------------------------------------------------------
 std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChContactMaterial> material,
                                                                        const ChCoordsys<>& pos,            // patch coord - centered BASE
-                                                                       const std::vector<double>& heights_absolute, // height array - j=0 is BOTTOM of field
+                                                                       const std::vector<double>& heights, // height array - j=0 is BOTTOM of field
                                                                        int grid_nx,  // resolution in X
                                                                        int grid_ny,  // resolution in Y
                                                                        double dimX,  // physical width along X (m)
                                                                        double dimY,  // physical length along Y (m)
                                                                        double sweep_sphere_radius,                                                                
-                                                                       bool visualize) {
+                                                                       bool visualize,
+                                                                       bool heightsAreLocal) {
     using chrono_types::make_shared;
 
     // initial setup
@@ -866,23 +874,28 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     // For simplicity, chrono is kept at double
     int nx = grid_nx;
     int ny = grid_ny;
-    if ((int)heights_absolute.size() != nx * ny)
+    if ((int)heights.size() != nx * ny)
         throw std::runtime_error("AddPatch: heights.size() mismatch");
 
-    // find min/max height and centre the heights around zero
-    double hmin = *std::min_element(heights_absolute.begin(), heights_absolute.end());
-    double hmax = *std::max_element(heights_absolute.begin(), heights_absolute.end());
+    // Determine height range based on input mode
+    double hmin, hmax;
+    std::vector<double> heights_for_shape;
     
-    // no centreing - using the absolute heights directly
-    // double centre = 0.5 * (hmin + hmax);
-
-
-
-    //std::vector<double> heights_centered(nx * ny);
-    //for (int idx = 0; idx < nx * ny; ++idx) {
-    //    heights_centered[idx] = heights_absolute[idx] - centre;  // **CENTER**
-    //}
-
+    if (heightsAreLocal) {
+        // Heights are already BASE-relative (like Unreal/Unity export)
+        // min is assumed to be 0, max is the top
+        hmin = 0.0;
+        hmax = *std::max_element(heights.begin(), heights.end());
+        // Use heights directly - they're already in the right format
+        heights_for_shape = heights;
+    } else {
+        // Heights are absolute world values
+        // Find min/max from the data
+        hmin = *std::min_element(heights.begin(), heights.end());
+        hmax = *std::max_element(heights.begin(), heights.end());
+        // absolute heights - note that Bullet shape will shift by -minH internally
+        heights_for_shape = heights;
+    }
         
     // get the world up
     ChVector3d v = ChWorldFrame::Vertical();
@@ -891,14 +904,10 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
                  : (std::fabs(v.y()) > std::fabs(v.z()))                                      ? 1
                                                          /* Z=2 */                            : 2;
 
-    // get the centered min/max values
- //   double hmin_c = hmin - centre;
- //   double hmax_c = hmax - centre;
-
     // build a single btHeightfieldTerrainShape
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
                                                       dimX, dimY,                    // field extent along X/Y
-                                                      heights_absolute,              // row-major double array, j=0 is the bottom row!!! Also, double input
+                                                      heights_for_shape,             // row-major double array, j=0 is the bottom row!!! Also, double input
                                                       1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
                                                       static_cast<float>(hmin),      // min height
                                                       static_cast<float>(hmax),      // max height
@@ -913,7 +922,9 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     patch->m_ny = ny;
     patch->m_width = dimX;
     patch->m_length = dimY;
-    patch->m_heights = std::move(heights_absolute);   // easy grab the height data across to the member data
+    patch->m_heights = heights_for_shape;   // Store the heights (may be original or already BASE-relative)
+    patch->m_heightsAreLocal = heightsAreLocal;  // Remember whether heights are already local
+    patch->m_hmin = hmin;  // Store for visual mesh offset
 
     // Visualisation mesh builder if visualise is true
     if (visualize) {
@@ -955,8 +966,11 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
             for (int ix = 0; ix < nx; ++ix) {
                 double x = ix * dx - halfX;
 
-                // Use heights RELATIVE TO BASE (minHeight at z=0 in local frame)
-                double z = patch->m_heights[iy * nx + ix] - hmin;  // Offset to BASE
+                // Convert to BASE-relative for visual mesh
+                // If heightsAreLocal, heights are already BASE-relative (hmin=0)
+                // If not, shift by -hmin to get BASE-relative
+                double z = heightsAreLocal ? patch->m_heights[iy * nx + ix] 
+                                           : patch->m_heights[iy * nx + ix] - hmin;
 
                 vertices[iv] = ChVector3d(x, y, z);
                 normals[iv] = ChVector3d(0, 0, 0);

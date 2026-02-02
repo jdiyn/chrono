@@ -163,17 +163,25 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
         bool visualization = true                     ///< [in] enable/disable construction of visualisation assets
     );
 
-    /// Create a new heightfield/heightmap patch
+    /// Create a new heightfield/heightmap patch from height data.
+    /// Heights can be provided as either:
+    /// - Absolute world heights (heightsAreLocal = false, default): e.g., 100m to 150m elevation
+    /// - Local BASE-relative heights (heightsAreLocal = true): e.g., 0m to 50m, where 0 is terrain base
+    /// 
+    /// The patch coordinate system (pos) defines where the BASE of the heightfield sits.
+    /// When heightsAreLocal = false, heights are internally shifted so that minHeight becomes local z=0.
+    /// When heightsAreLocal = true, heights are used directly (assumes user already has base at 0).
     std::shared_ptr<RigidTerrain::Patch> AddPatch(
         std::shared_ptr<ChContactMaterial> material,
         const ChCoordsys<>& pos,                        ///< [in] patch coordsys - centered BASE of heightfield
-        const std::vector<double>& heights_absolute,    ///< [in] row-major height array - j=0 is BOTTOM of field
+        const std::vector<double>& heights,             ///< [in] row-major height array - j=0 is BOTTOM of field
         int grid_nx,                                    ///< [in] resolution in X
         int grid_ny,                                    ///< [in] resolution in Y
         double dimX,                                    ///< [in] physical width along X (m)
         double dimY,                                    ///< [in] physical width along Y (m)
         double sweep_sphere_radius = 0.001,             ///< [in] radius of sweep sphere
-        bool vis = false);                              ///< [in] Generate a chtrianglemesh to represent the patch (false for Unity)
+        bool visualize = false,                         ///< [in] Generate a chtrianglemesh to represent the patch
+        bool heightsAreLocal = false);                  ///< [in] true if heights are already BASE-relative (like Unreal), false if absolute world heights
 
     /// Build a j=0 bottom heightfield patch from a grayscale image file.
     /// The image is scaled to the physical extents (sizeX sizeY) and to the
@@ -290,6 +298,8 @@ class CH_VEHICLE_API RigidTerrain : public ChTerrain {
         int m_nx, m_ny;                ///< number of samples in X/Y (i.e. heightmap resolution)
         double m_length, m_width;      ///< field extent along X/Y in m
         std::vector<double> m_heights; ///< row-major heights (y=0 / j=0 is at the bottom)
+        bool m_heightsAreLocal{false}; ///< true if heights are BASE-relative (Unreal/Unity style)
+        double m_hmin{0.0};            ///< minimum height value (used for visual mesh offset)
 
         // heightfield collision shape
         std::shared_ptr<ChCollisionShapeHeightField> m_hf_shape;

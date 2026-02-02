@@ -498,10 +498,11 @@ void cbtHeightfieldChronoTerrainShape::rebuildQuadExtentsRegion(int x0, int z0, 
     
     for (int z = z0; z <= z1; ++z) {
         for (int x = x0; x <= x1; ++x) {
-            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+            // Heights are already BASE-relative (shifted by -minH in constructor)
+            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale;
+            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale;
+            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale;
+            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale;
             
             QuadExtents e;
             e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
@@ -530,12 +531,13 @@ void cbtHeightfieldChronoTerrainShape::updateAcceleratorRegion(int x0, int z0, i
             Range r;
             int sx = std::min(chunkX0, m_heightStickWidth - 1);
             int sz = std::min(chunkZ0, m_heightStickLength - 1);
-            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale - m_localOrigin[m_upAxis];
+            // Heights are already BASE-relative (shifted by -minH in constructor)
+            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale;
             r.min = r.max = h0;
             
             for (int zz = chunkZ0; zz < chunkZ0 + m_vboundsChunkSize + 1 && zz < m_heightStickLength; ++zz) {
                 for (int xx = chunkX0; xx < chunkX0 + m_vboundsChunkSize + 1 && xx < m_heightStickWidth; ++xx) {
-                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale - m_localOrigin[m_upAxis];
+                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale;
                     r.min = cbtMin(r.min, h);
                     r.max = cbtMax(r.max, h);
                 }
@@ -772,13 +774,13 @@ void cbtHeightfieldChronoTerrainShape::buildAccelerator(int chunkSize) {
         for (int cx = 0; cx < m_vboundsGridWidth; ++cx) {
             int x0 = cx * chunkSize;
             Range r;
-            // init
+            // Heights are already BASE-relative (shifted by -minH in constructor)
             int sx = std::min(x0, m_heightStickWidth - 1), sz = std::min(z0, m_heightStickLength - 1);
-            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale - m_localOrigin[m_upAxis];
+            cbtScalar h0 = getRawHeightFieldValue(sx, sz) * m_heightScale;
             r.min = r.max = h0;
             for (int zz = z0; zz < z0 + chunkSize + 1 && zz < m_heightStickLength; ++zz) {
                 for (int xx = x0; xx < x0 + chunkSize + 1 && xx < m_heightStickWidth; ++xx) {
-                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale - m_localOrigin[m_upAxis];
+                    cbtScalar h = getRawHeightFieldValue(xx, zz) * m_heightScale;
                     r.min = cbtMin(r.min, h);
                     r.max = cbtMax(r.max, h);
                 }
@@ -804,10 +806,11 @@ void cbtHeightfieldChronoTerrainShape::buildQuadExtents() {
 
     for (int z = 0, idx = 0; z < l; ++z) {
         for (int x = 0; x < w; ++x, ++idx) {
-            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
-            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+            // Heights are already BASE-relative (shifted by -minH in constructor)
+            const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale;
+            const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale;
+            const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale;
+            const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale;
 
             QuadExtents e;
             e.minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
@@ -1021,12 +1024,12 @@ void cbtHeightfieldChronoTerrainShape::queryHeightAndGradient(cbtScalar coordU,
     cbtScalar fracX = gridX - cellX;
     cbtScalar fracZ = gridZ - cellZ;
 
-    // Get the interpolated height (still centered, un‑scaled)
-    cbtScalar heightCentered;
-    getBilinearHeight(cellX, cellZ, fracX, fracZ, heightCentered);
+    // Get the interpolated height (already BASE-relative from stored data)
+    cbtScalar heightLocal;
+    getBilinearHeight(cellX, cellZ, fracX, fracZ, heightLocal);
 
-    // Center around the stored origin (same as getVertex)
-    outHeight = heightCentered - m_localOrigin[m_upAxis];
+    // Heights are already BASE-relative (shifted by -minH in constructor)
+    outHeight = heightLocal;
 
     // Compute local partial derivatives ∂H/∂u, ∂H/∂v in meters/meter
     // We can reuse the raw data directly:
@@ -1146,9 +1149,9 @@ void cbtHeightfieldChronoTerrainShape::performRaycast(cbtTriangleCallback* callb
         rayMax.getZ() < shapeAabbMin.getZ() || rayMin.getZ() > shapeAabbMax.getZ())
         return;
 
-    // Transform into cell-local space
-    cbtVector3 beginPos = raySource / getLocalScaling() + m_localOrigin;
-    cbtVector3 endPos = rayTarget / getLocalScaling() + m_localOrigin;
+    // Transform into cell-local space (m_localOrigin is always (0,0,0) for BASE-at-origin mode)
+    cbtVector3 beginPos = raySource / getLocalScaling();
+    cbtVector3 endPos = rayTarget / getLocalScaling();
 
     // Functor to emit the two triangles in each cell (with winding & subdivision)
     struct ProcessTrianglesAction {
