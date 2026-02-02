@@ -10,6 +10,28 @@
 // =============================================================================
 // Authors: Josh Diyn
 // =============================================================================
+//
+// Optimized heightfield terrain shape for Chrono physics.
+//
+// ## Performance Characteristics
+// - Sphere collision: O(1) analytical with bilinear interpolation + ClosestPointOnTriangle
+// - Convex collision: O(1) height rejection + support sampling (26-42 directions)
+// - Ray queries: O(1) bilinear interpolation with gradient-based normals
+//
+// ## Coordinate Conventions
+// - **Local origin**: Center of the heightfield patch (planar dimensions centered)
+// - **Height range**: Heights are stored as absolute values; m_localHalfExtents.up() offsets
+//   the geometry so that minHeight maps to the bottom and maxHeight to the top
+// - **Grid indexing**: Row-major [j * width + i] where i is along width axis
+// - **Up-axis**: 0=X-up, 1=Y-up, 2=Z-up (default Z)
+// - **Local scaling**: Applied after height lookup via m_localScaling vector
+//
+// ## Caching Strategy
+// - Small heightfields (≤512×512): Flat vertex cache, rebuilt on dirty region
+// - Large heightfields (>1M vertices): Tiled LOD cache with incremental updates
+// - Quad extents cache: Min/max heights per quad for O(1) early-out rejection
+//
+// =============================================================================
 
 #ifndef CBT_HEIGHTFIELD_CHRONO_TERRAIN_SHAPE_H
 #define CBT_HEIGHTFIELD_CHRONO_TERRAIN_SHAPE_H

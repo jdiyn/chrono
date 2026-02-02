@@ -23,7 +23,26 @@ namespace chrono {
 /// @addtogroup chrono_collision
 /// @{
 
-/// A heightfield collision shape.  Under Bullet, this becomes a btHeightfieldTerrainShape.
+/// A heightfield collision shape for terrain represented as a 2D grid of height samples.
+///
+/// Under Bullet, this becomes a cbtHeightfieldChronoTerrainShape with optimized O(1) collision
+/// detection for spheres and efficient support sampling for convex shapes.
+///
+/// ## Coordinate Conventions
+/// - **Local coordinates** are centered: planar origin at (0,0), center of the heightfield
+/// - **Height values** use BASE-at-origin: local height=0 corresponds to minHeight
+/// - **Grid indexing** is row-major: heights[j * nx + i] where i is along width, j is along length
+/// - **Up-axis** determines which local axis is height: 0=X, 1=Y, 2=Z (default Z)
+///
+/// ## Caching Behavior
+/// For small heightfields (≤512×512), vertex caching is automatic. For larger terrains,
+/// a tiled LOD cache can be enabled with SetTiledCacheConfig() to efficiently handle
+/// million-vertex heightfields with O(1) collision performance.
+///
+/// ## Performance Notes
+/// - Sphere collision: O(1) analytical bilinear interpolation + ClosestPointOnTriangle
+/// - Convex collision: O(1) height rejection + support sampling (26-42 directions)
+/// - Large terrain: Tiled caching with dirty region tracking
 class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
   public:
 
@@ -76,13 +95,39 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     /// Return the thickness as the radius of a sphere-swept mesh.
     double GetRadius() const { return sradius; }
 
-    /// Calculate the height of the patch at the given position and return the height and normal vector
+    /// Calculate the height of the patch at the given position and return the height and normal vector.
+    /// Uses bilinear interpolation matching the Bullet collision shape's internal algorithm.
+    /// @param patch_frame [in] body/patch frame (position and rotation)
+    /// @param query_pos [in] query position in world space
+    /// @param world_up [in] world up vector (usually Z-up: ChVector3d(0,0,1))
+    /// @param out_height [out] height at the query position projected onto world_up
+    /// @param out_normal [out] surface normal at the query position (in world space)
+    /// @return true if query projects inside patch bounds, false if outside
     bool RayHit(const ChCoordsys<>& patch_frame,    ///< [in] body/patch frame
                 const ChVector3d& query_pos,        ///< [in] query position in world space
                 const ChVector3d& world_up,         ///< [in] world up vector (usually Z)
                 double& out_height,                 ///< [out] height at the query position (in world space)
                 ChVector3d& out_normal) const;      ///< [out] normal at the query position (in world space)
 
+    //
+    // Tiled Cache Configuration (for large terrains > 512x512)
+    // These settings are applied when the collision model is built.
+    //
+
+    /// Enable tiled LOD caching for large heightfields.
+    /// When enabled, only tiles near active collision queries are cached at full resolution.
+    /// @param tileSize Grid cells per tile edge (default 64, must be power of 2)
+    /// @param cacheRadius Number of tiles to cache at full resolution around query point
+    void SetTiledCacheConfig(int tileSize = 64, int cacheRadius = 2) {
+        m_tiledCacheTileSize = tileSize;
+        m_tiledCacheRadius = cacheRadius;
+    }
+
+    /// Get tile size for tiled cache (0 if not configured)
+    int GetTiledCacheTileSize() const { return m_tiledCacheTileSize; }
+
+    /// Get cache radius for tiled cache (0 if not configured)
+    int GetTiledCacheRadius() const { return m_tiledCacheRadius; }
         
     void ArchiveOut(ChArchiveOut& archive);
     void ArchiveIn(ChArchiveIn& archive);
@@ -107,6 +152,10 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
      double m_cellSizeV;      // length /(ny1)
      double m_invCellSizeU;   // 1/m_cellSizeU
      double m_invCellSizeV;   // 1/m_cellSizeV
+
+    // Tiled cache configuration (applied when collision model is built)
+    int m_tiledCacheTileSize = 0;   // 0 = auto (use flat cache for small HFs)
+    int m_tiledCacheRadius = 2;     // Number of tiles at full res
 };
 
 

@@ -651,33 +651,59 @@ void cbtHeightfieldChronoTerrainShape::updateTileCacheAroundPosition(const cbtVe
     if (centerTileX == m_lastCacheCenterTileX && centerTileZ == m_lastCacheCenterTileZ)
         return;
     
+    const int oldCenterX = m_lastCacheCenterTileX;
+    const int oldCenterZ = m_lastCacheCenterTileZ;
     m_lastCacheCenterTileX = centerTileX;
     m_lastCacheCenterTileZ = centerTileZ;
     
-    // Invalidate tiles outside the new cache radius
-    for (int tz = 0; tz < m_tileCountZ; ++tz) {
-        for (int tx = 0; tx < m_tileCountX; ++tx) {
-            const int distX = std::abs(tx - centerTileX);
-            const int distZ = std::abs(tz - centerTileZ);
-            const int dist = cbtMax(distX, distZ);  // Chebyshev distance
+    // INCREMENTAL UPDATE: Only process tiles that changed status
+    // Instead of iterating all tiles, we identify:
+    // 1. Tiles that left the cache radius (invalidate)
+    // 2. Tiles that entered the cache radius (build)
+    // 3. Tiles that changed LOD level (rebuild)
+    
+    const int fullRadius = m_tileCacheRadius;
+    const int lodRadius = m_tileCacheRadius * 2;
+    
+    // Determine the bounding box of tiles that need processing
+    // This is the union of old and new cache regions
+    const int minTileX = cbtMax(0, cbtMin(oldCenterX, centerTileX) - lodRadius);
+    const int maxTileX = cbtMin(m_tileCountX - 1, cbtMax(oldCenterX, centerTileX) + lodRadius);
+    const int minTileZ = cbtMax(0, cbtMin(oldCenterZ, centerTileZ) - lodRadius);
+    const int maxTileZ = cbtMin(m_tileCountZ - 1, cbtMax(oldCenterZ, centerTileZ) + lodRadius);
+    
+    for (int tz = minTileZ; tz <= maxTileZ; ++tz) {
+        for (int tx = minTileX; tx <= maxTileX; ++tx) {
+            // Compute distances to old and new centers
+            const int oldDistX = (oldCenterX >= 0) ? std::abs(tx - oldCenterX) : 9999;
+            const int oldDistZ = (oldCenterZ >= 0) ? std::abs(tz - oldCenterZ) : 9999;
+            const int oldDist = cbtMax(oldDistX, oldDistZ);
+            
+            const int newDistX = std::abs(tx - centerTileX);
+            const int newDistZ = std::abs(tz - centerTileZ);
+            const int newDist = cbtMax(newDistX, newDistZ);
+            
+            // Determine old and new LOD levels
+            // -1 = not cached, 0 = full res, 1 = half res
+            int oldLOD = (oldDist <= fullRadius) ? 0 : (oldDist <= lodRadius) ? 1 : -1;
+            int newLOD = (newDist <= fullRadius) ? 0 : (newDist <= lodRadius) ? 1 : -1;
+            
+            // Skip if status unchanged
+            if (oldLOD == newLOD)
+                continue;
             
             CachedTile& tile = m_tiledCache[tz * m_tileCountX + tx];
             
-            if (dist > m_tileCacheRadius * 2) {
-                // Far away - invalidate
-                tile.valid = false;
-                tile.vertices.clear();
-                tile.vertices.shrink_to_fit();
-            } else if (dist <= m_tileCacheRadius) {
-                // Close - full resolution
-                if (!tile.valid || tile.lodLevel != 0) {
-                    buildTileCache(tx, tz, 0);
+            if (newLOD < 0) {
+                // Tile left cache radius - invalidate
+                if (tile.valid) {
+                    tile.valid = false;
+                    tile.vertices.clear();
+                    tile.vertices.shrink_to_fit();  // Release memory
                 }
-            } else if (dist <= m_tileCacheRadius * 2) {
-                // Medium distance - LOD 1 (half res)
-                if (!tile.valid || tile.lodLevel != 1) {
-                    buildTileCache(tx, tz, 1);
-                }
+            } else if (newLOD != oldLOD || !tile.valid || tile.lodLevel != newLOD) {
+                // Tile entered cache radius or changed LOD - build/rebuild
+                buildTileCache(tx, tz, newLOD);
             }
         }
     }
