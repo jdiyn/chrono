@@ -35,7 +35,6 @@
 #include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtPointCollector.h"
 #include "chrono/collision/bullet/BulletCollision/NarrowPhaseCollision/cbtVoronoiSimplexSolver.h"
 
-
 namespace chrono {
 
 // ================================================================================================

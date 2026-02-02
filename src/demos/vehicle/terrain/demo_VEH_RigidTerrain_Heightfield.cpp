@@ -29,6 +29,8 @@
 #include <vector>
 #include <random>
 #include <algorithm>
+#include <numeric>
+#include <limits>
 
 #include "chrono/input_output/ChUtilsInputOutput.h"
 #include "chrono_vehicle/ChVehicleDataPath.h"
@@ -67,8 +69,8 @@ int main(int argc, char* argv[]) {
     // Height map params
     double terrainWidth = 100;  // eg. scale across 100m x 100m
     double terrainHeight = 100;
-    int heightMapNx = 256,
-        heightMapNy = 256;  // note: irrlicht visual mesh for this patch is capped to 512 x 512 to prevent slowdown caused by rendering the mesh
+    int heightMapNx = 2056,
+        heightMapNy = 2056;  // note: irrlicht visual mesh for this patch is capped to 512 x 512 to prevent slowdown caused by rendering the mesh
     double heightAmp = 4.5;  // Scale the noise-based height map to this height (total)
         
     // Create vehicle
@@ -143,21 +145,18 @@ int main(int argc, char* argv[]) {
     // time the build - note the visual is what takes the longest. Try turning off the visual for a test of the collision shape speed
     auto start = std::chrono::high_resolution_clock::now();
 
-    // -----------------------------------------------------------------------------
-    // replace the old Perlin-heightfield call with the new j = 0 image overload
-    // -----------------------------------------------------------------------------
     std::string heightmap_file = GetChronoDataFile("vehicle/terrain/height_maps/test64.bmp"); // other terrain works but terrain3 flat spots are causing issues
     double hMin = 0;     // black in image is mapped to this value
     double hMax = 4.5;   // map white up to hmax
 
-    auto dynPatch = terrain.AddPatch(patch_mat, ChCoordsys<>(ChVector3d(4, -5, -3), QuatFromAngleX(0)),  // patch at world origin
-                                     heightmap_file,                                       // grayscale height-map
-                                     terrainWidth, terrainHeight,                          // physical X/Y extents (m)
-                                     hMin, hMax,                                           // height range (m)
-                                     0.001f);                                                // build visual mesh
-    
+    //auto dynPatch = terrain.AddPatch(patch_mat, ChCoordsys<>(ChVector3d(4, -5, -1), QuatFromAngleX(0)),  // patch at world origin
+    //                                 heightmap_file,                                       // grayscale height-map
+    //                                 terrainWidth, terrainHeight,                          // physical X/Y extents (m)
+    //                                 hMin, hMax,                                           // height range (m)
+    //                                 0.001f);                                              // build visual mesh
+    //
 
-    dynPatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
+    //dynPatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
 
     //auto boxpatch = terrain.AddPatch(patch_mat, ChCoordsys<>(), 100, 100, 1, false);
     //boxpatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
@@ -178,7 +177,7 @@ int main(int argc, char* argv[]) {
     //flatPatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
 
 
-    // Generate a “bowl” that is 5 m deep at the center, 0 m at the rim
+    // Generate a ï¿½bowlï¿½ that is 5 m deep at the center, 0 m at the rim
     std::vector<double> bowl_heights(heightMapNx * heightMapNy);
     double halfX = terrainWidth / 2.0;
     double halfY = terrainHeight / 2.0;
@@ -205,13 +204,130 @@ int main(int argc, char* argv[]) {
     //                                  heightMapNy, terrainWidth, terrainHeight, 0.001f, true);
     //bowlPatch->SetColor(ChColor(0.5f, 0.7f, 0.6f));
 
+    // =========================================================================
+    // PERLIN NOISE HEIGHTFIELD PATCH
+    // =========================================================================
+    // Generate procedural terrain using Perlin noise for natural-looking hills
+    // This demonstrates programmatic heightfield generation without external files
+    
+    // Perlin noise parameters
+    int perlinNx = 1024;
+    int perlinNy = 1024;
+    double perlinWidth = 80.0;   // 80m x 80m patch
+    double perlinLength = 80.0;
+    double perlinAmplitude = 6.0;  // Max height variation in meters
+    int perlinOctaves = 4;         // Number of noise layers
+    double perlinPersistence = 0.5; // Amplitude falloff per octave
+    double perlinFrequency = 0.02;  // Base frequency (lower = smoother)
+    
+    // Simple Perlin-like noise implementation using gradient vectors
+    // Permutation table for pseudo-random gradient selection
+    std::vector<int> perm(512);
+    {
+        std::vector<int> p(256);
+        std::iota(p.begin(), p.end(), 0);
+        std::mt19937 rng(42);  // Fixed seed for reproducibility
+        std::shuffle(p.begin(), p.end(), rng);
+        for (int i = 0; i < 256; ++i) {
+            perm[i] = perm[i + 256] = p[i];
+        }
+    }
+    
+    // Gradient vectors (8 directions)
+    const double gradients[8][2] = {
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+        {0.7071, 0.7071}, {-0.7071, 0.7071}, {0.7071, -0.7071}, {-0.7071, -0.7071}
+    };
+    
+    // Fade function for smooth interpolation
+    auto fade = [](double t) { return t * t * t * (t * (t * 6 - 15) + 10); };
+    
+    // Linear interpolation
+    auto lerp = [](double a, double b, double t) { return a + t * (b - a); };
+    
+    // Gradient function
+    auto grad = [&](int hash, double x, double y) {
+        int h = hash & 7;
+        return gradients[h][0] * x + gradients[h][1] * y;
+    };
+    
+    // 2D Perlin noise function
+    auto perlinNoise2D = [&](double x, double y) -> double {
+        int X = static_cast<int>(std::floor(x)) & 255;
+        int Y = static_cast<int>(std::floor(y)) & 255;
+        x -= std::floor(x);
+        y -= std::floor(y);
+        double u = fade(x);
+        double v = fade(y);
+        int aa = perm[perm[X] + Y];
+        int ab = perm[perm[X] + Y + 1];
+        int ba = perm[perm[X + 1] + Y];
+        int bb = perm[perm[X + 1] + Y + 1];
+        return lerp(lerp(grad(aa, x, y), grad(ba, x - 1, y), u),
+                    lerp(grad(ab, x, y - 1), grad(bb, x - 1, y - 1), u), v);
+    };
+    
+    // Fractal Brownian Motion (fBm) - layered Perlin noise
+    auto fbm = [&](double x, double y, int octaves, double persistence, double frequency) -> double {
+        double total = 0.0;
+        double amplitude = 1.0;
+        double maxValue = 0.0;
+        for (int i = 0; i < octaves; ++i) {
+            total += perlinNoise2D(x * frequency, y * frequency) * amplitude;
+            maxValue += amplitude;
+            amplitude *= persistence;
+            frequency *= 2.0;
+        }
+        return total / maxValue;  // Normalize to [-1, 1]
+    };
+    
+    // Generate Perlin noise heightfield
+    std::vector<double> perlin_heights(perlinNx * perlinNy);
+    double perlinDx = perlinWidth / (perlinNx - 1);
+    double perlinDy = perlinLength / (perlinNy - 1);
+    
+    // First pass: generate raw noise and track actual min/max
+    double noiseMin = std::numeric_limits<double>::max();
+    double noiseMax = std::numeric_limits<double>::lowest();
+    
+    for (int j = 0; j < perlinNy; ++j) {
+        for (int i = 0; i < perlinNx; ++i) {
+            double worldX = i * perlinDx;
+            double worldY = j * perlinDy;
+            double noise = fbm(worldX, worldY, perlinOctaves, perlinPersistence, perlinFrequency);
+            perlin_heights[j * perlinNx + i] = noise;
+            noiseMin = std::min(noiseMin, noise);
+            noiseMax = std::max(noiseMax, noise);
+        }
+    }
+    
+    // Second pass: rescale to [0, perlinAmplitude] using actual range
+    double noiseRange = noiseMax - noiseMin;
+    if (noiseRange > 1e-9) {
+        for (auto& h : perlin_heights) {
+            h = ((h - noiseMin) / noiseRange) * perlinAmplitude;
+        }
+    }
+    
+    std::cout << "Perlin noise range: [" << noiseMin << ", " << noiseMax << "] -> scaled to [0, " << perlinAmplitude << "]" << std::endl;
+    
+    // Add the Perlin noise patch offset from the main terrain
+    auto perlinPatch = terrain.AddPatch(patch_mat, 
+                                         ChCoordsys<>(ChVector3d(0, 0, -6), QUNIT),  // Position offset
+                                         perlin_heights,
+                                         perlinNx, perlinNy,
+                                         perlinWidth, perlinLength,
+                                         0.001f,   // sweep sphere radius
+                                         true);    // build visual mesh
+    perlinPatch->SetColor(ChColor(0.6f, 0.55f, 0.4f));  // Sandy/dirt color
+
 
 
     // Initialize terrain
     terrain.Initialize();
     // timer ouput
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "Heightfield Terrain build time: " << std::chrono::duration<double, std::micro>(end - start).count() << " µs\n";
+    std::cout << "Heightfield Terrain build time: " << std::chrono::duration<double, std::micro>(end - start).count() << " ï¿½s\n";
 
     // driver
     double render_step = 1.0 / 50;
