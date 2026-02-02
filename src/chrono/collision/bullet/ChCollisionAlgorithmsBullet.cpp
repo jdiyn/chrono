@@ -2540,6 +2540,10 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     if (!m_manifoldPtr)
         return;
     resultOut->setPersistentManifold(m_manifoldPtr);
+    
+    // Clear old contacts - a sphere only has ONE contact point at a time
+    // Keeping stale contacts in the manifold can cause incorrect physics
+    m_manifoldPtr->clearManifold();
 
     // Figure out which wrapper is the sphere and which is the terrain
     const bool sphereIsA = (wrapperA->getCollisionShape() == m_convex);
@@ -2604,8 +2608,6 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     int cz = (int)std::floor((double)gridZ);
     cx = cbtMax(0, cbtMin(cx, W - 2));
     cz = cbtMax(0, cbtMin(cz, L - 2));
-    const cbtScalar fracX = gridX - cx;
-    const cbtScalar fracZ = gridZ - cz;
 
     cbtVector3 bestPointLocal(0, 0, 0);
     cbtVector3 bestNormalLocal(0, 0, 0);
@@ -2613,76 +2615,18 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     bool foundContact = false;
 
     // ========================================================================
-    // FAST PATH: O(1) ANALYTICAL HEIGHT SAMPLING
+    // SPHERE-TERRAIN COLLISION: Always use triangle closest-point
     // ========================================================================
-    // Sample terrain height and gradient at sphere center projection.
-    // Works perfectly for gentle slopes. For steep terrain, we fall back to triangles.
-    
-    cbtScalar terrainH = 0;
-    cbtVector3 terrainGrad(0, 0, 0);
-    terrainGrad[upAxis] = cbtScalar(1);  // Default up
-    
-    // Query height and gradient at sphere center (u,v in centered meters)
-    terrainShape->queryHeightAndGradient(u, v, terrainH, terrainGrad);
-    
-    // Apply local scaling to get the actual surface position
-    cbtVector3 surfacePointLocal(0, 0, 0);
-    surfacePointLocal[axisU] = u * localScaling[axisU];
-    surfacePointLocal[axisV] = v * localScaling[axisV];
-    surfacePointLocal[upAxis] = terrainH * localScaling[upAxis];
-    
-    // Transform gradient to account for non-uniform scaling (normals use inverse-transpose)
-    cbtVector3 normalLocal = cbtVector3(
-        terrainGrad.x() * invS.x(),
-        terrainGrad.y() * invS.y(),
-        terrainGrad.z() * invS.z()
-    );
-    if (normalLocal.length2() > SIMD_EPSILON)
-        normalLocal.normalize();
-    else {
-        normalLocal.setValue(0, 0, 0);
-        normalLocal[upAxis] = cbtScalar(1);
-    }
-    
-    // Ensure normal points upward (toward the sphere, which should be above terrain)
-    if (normalLocal[upAxis] < 0)
-        normalLocal = -normalLocal;
-    
-    // Compute signed distance from sphere center to terrain plane
-    // The plane passes through surfacePointLocal with normal normalLocal
-    const cbtVector3 toSphere = sphereCenterLocal - surfacePointLocal;
-    const cbtScalar signedDistToPlane = toSphere.dot(normalLocal);
-    
-    // Check slope steepness - if normal is nearly horizontal, terrain is steep
-    const cbtScalar slopeThreshold = cbtScalar(0.5);  // cos(60°) - steeper than this uses fallback
-    const bool isSteep = cbtFabs(normalLocal[upAxis]) < slopeThreshold;
-    
-    // Check if sphere is near cell boundary (might need adjacent cell triangles)
-    const cbtScalar boundaryThreshold = cbtScalar(0.15);  // Within 15% of cell edge
-    const bool nearBoundary = (fracX < boundaryThreshold || fracX > (1 - boundaryThreshold) ||
-                               fracZ < boundaryThreshold || fracZ > (1 - boundaryThreshold));
-    
-    // Use analytical result if terrain is gentle AND sphere is well within cell
-    if (!isSteep && !nearBoundary) {
-        // Penetration = radius - distance to surface
-        const cbtScalar penetration = radius - signedDistToPlane;
-        
-        if (penetration > -contactSlop) {
-            // Contact point on terrain surface (closest point on plane)
-            bestPointLocal = sphereCenterLocal - normalLocal * signedDistToPlane;
-            bestNormalLocal = normalLocal;
-            bestDist = signedDistToPlane;
-            foundContact = true;
-        }
-    }
-    
-    // ========================================================================
-    // FALLBACK: TRIANGLE SEARCH FOR STEEP SLOPES OR CELL BOUNDARIES
-    // ========================================================================
-    // Only search a SMALL fixed neighborhood (max 3x3 cells = 18 triangles)
-    // This is still O(1) since neighborhood size is bounded, not O(r²)
-    
-    if (!foundContact || isSteep || nearBoundary) {
+    // For spheres, we MUST find the actual closest point on the terrain surface
+    // to avoid false torque. The contact normal must point exactly from the 
+    // closest point to the sphere center.
+    //
+    // An analytical height-sampling approach would only work for perfectly flat
+    // terrain. On any slope, the closest point is NOT directly below the sphere,
+    // so we must use proper closest-point-on-triangle calculation.
+    //
+    // This is still O(1) because we only search a bounded 3x3 cell neighborhood.
+    {
         const auto& vcache = terrainShape->getVertexCache();
         cbtVector3 tmpVert;
         auto getVert = [&](int x, int z) -> cbtVector3 {
@@ -2700,8 +2644,7 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
             return tmpVert;
         };
         
-        // Fixed small neighborhood: 1 cell radius (3x3 = 9 quads = 18 triangles max)
-        // This handles steep slopes and cell boundaries without O(r²) explosion
+        // Search 3x3 cell neighborhood (18 triangles max) - this is O(1)
         const int searchRadius = 1;
         const int x0 = cbtMax(0, cx - searchRadius);
         const int x1 = cbtMin(W - 2, cx + searchRadius);
@@ -2710,9 +2653,7 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         
         const cbtScalar sphereUp = sphereCenterLocal[upAxis];
         const cbtScalar cutoff2 = cutoff * cutoff;
-        cbtScalar bestDist2 = (foundContact) ? (bestDist * bestDist) : SIMD_INFINITY;
-        cbtVector3 bestTriNormalLocal(0, 0, 0);
-        bestTriNormalLocal[upAxis] = cbtScalar(1);
+        cbtScalar bestDist2 = SIMD_INFINITY;
         
         for (int z = z0; z <= z1; ++z) {
             for (int x = x0; x <= x1; ++x) {
@@ -2736,13 +2677,6 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
                     if (d2 < bestDist2 && d2 < cutoff2) {
                         bestDist2 = d2;
                         bestPointLocal = q;
-                        
-                        cbtVector3 n = (b - a).cross(c - a);
-                        if (n.length2() > SIMD_EPSILON) {
-                            n.normalize();
-                            if (n[upAxis] < 0) n = -n;  // Ensure upward-facing
-                            bestTriNormalLocal = n;
-                        }
                         foundContact = true;
                     }
                 };
@@ -2759,12 +2693,15 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         
         if (foundContact && bestDist2 < SIMD_INFINITY) {
             bestDist = cbtSqrt(bestDist2);
-            // Build normal from displacement or use triangle normal
+            // Normal points from closest point to sphere center - this is CRITICAL
+            // for avoiding false torque on spheres
             const cbtVector3 delta = sphereCenterLocal - bestPointLocal;
             if (delta.length2() > SIMD_EPSILON) {
                 bestNormalLocal = delta.normalized();
             } else {
-                bestNormalLocal = bestTriNormalLocal;
+                // Sphere center is exactly on terrain - use up direction
+                bestNormalLocal.setValue(0, 0, 0);
+                bestNormalLocal[upAxis] = cbtScalar(1);
             }
         }
     }
@@ -2775,20 +2712,26 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         return;
     normalWorld.normalize();
 
+    // Contact point is on the terrain surface
     const cbtVector3 pointOnTerrainWorld = terrainTransform * bestPointLocal;
-    const cbtVector3 pointOnSphereWorld = sphereCenterWorld - normalWorld * radius;
-
-    // Compute signed separation along the chosen normal
+    
+    // For sphere collision, the contact point on sphere is sphere center minus radius along normal
+    // The distance is from terrain surface to sphere surface along the normal
     const cbtScalar distAlongNormal = (sphereCenterWorld - pointOnTerrainWorld).dot(normalWorld) - radius - terrainMargin;
     if (distAlongNormal > contactSlop)
         return;
 
+    // Bullet convention: contact point is on body B, normal points from B toward A
+    // For sphereIsA: B=terrain, A=sphere, normal points terrain->sphere (already correct)
+    // For !sphereIsA: B=sphere, A=terrain, normal should point sphere->terrain (flip)
     if (sphereIsA) {
-        // Bullet expects the contact normal to point from B to A
-        // Here A is the sphere and B is the terrain
+        // Normal points from terrain (B) to sphere (A) - this is correct
+        // Point is on terrain surface
         resultOut->addContactPoint(normalWorld, pointOnTerrainWorld, distAlongNormal);
     } else {
-        // Whereas in this case, A is the terrain and B is the sphere
+        // Normal needs to point from sphere (B) to terrain (A)
+        // Point should be on sphere surface
+        const cbtVector3 pointOnSphereWorld = sphereCenterWorld - normalWorld * radius;
         resultOut->addContactPoint(-normalWorld, pointOnSphereWorld, distAlongNormal);
     }
 
