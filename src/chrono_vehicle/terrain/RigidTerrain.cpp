@@ -928,11 +928,30 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
 
     // Visualisation mesh builder if visualise is true
     if (visualize) {
-        // Construct a triangular mesh for visualisation
-        double dx = dimX / (nx - 1);
-        double dy = dimY / (ny - 1);
-        unsigned int n_verts = nx * ny;
-        unsigned int n_faces = 2 * (nx - 1) * (ny - 1);
+        // Irrlicht/VSG have practical limits on mesh size (16-bit index buffers = 65535 vertices)
+        // For large heightfields, we downsample the visual mesh while keeping full collision resolution
+        const int MAX_VIS_VERTS = 512;  // Max 512x512 = 262144 vertices for visual mesh
+        int vis_nx = nx;
+        int vis_ny = ny;
+        int vis_step = 1;
+        
+        // Calculate downsampling step to keep visual mesh manageable
+        while (vis_nx > MAX_VIS_VERTS || vis_ny > MAX_VIS_VERTS) {
+            vis_step *= 2;
+            vis_nx = (nx + vis_step - 1) / vis_step;
+            vis_ny = (ny + vis_step - 1) / vis_step;
+        }
+        
+        if (vis_step > 1) {
+            std::cout << "RigidTerrain: Downsampling visual mesh from " << nx << "x" << ny 
+                      << " to " << vis_nx << "x" << vis_ny << " (step=" << vis_step << ")" << std::endl;
+        }
+        
+        // Construct a triangular mesh for visualisation (possibly downsampled)
+        double vis_dx = dimX / (vis_nx - 1);
+        double vis_dy = dimY / (vis_ny - 1);
+        unsigned int n_verts = vis_nx * vis_ny;
+        unsigned int n_faces = 2 * (vis_nx - 1) * (vis_ny - 1);
 
         // Initialize the mesh
         patch->m_vis_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
@@ -959,18 +978,20 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
         unsigned int iv = 0;
         double halfX = dimX / 2.0;
         double halfY = dimY / 2.0;
-        double x_scale = 1.0 / (nx - 1);
-        double y_scale = 1.0 / (ny - 1);
-        for (int iy = 0; iy < ny; ++iy) {
-            double y = iy * dy - halfY;
-            for (int ix = 0; ix < nx; ++ix) {
-                double x = ix * dx - halfX;
+        double x_scale = 1.0 / (vis_nx - 1);
+        double y_scale = 1.0 / (vis_ny - 1);
+        for (int iy = 0; iy < vis_ny; ++iy) {
+            int src_iy = std::min(iy * vis_step, ny - 1);
+            double y = iy * vis_dy - halfY;
+            for (int ix = 0; ix < vis_nx; ++ix) {
+                int src_ix = std::min(ix * vis_step, nx - 1);
+                double x = ix * vis_dx - halfX;
 
                 // Convert to BASE-relative for visual mesh
                 // If heightsAreLocal, heights are already BASE-relative (hmin=0)
                 // If not, shift by -hmin to get BASE-relative
-                double z = heightsAreLocal ? patch->m_heights[iy * nx + ix] 
-                                           : patch->m_heights[iy * nx + ix] - hmin;
+                double z = heightsAreLocal ? patch->m_heights[src_iy * nx + src_ix] 
+                                           : patch->m_heights[src_iy * nx + src_ix] - hmin;
 
                 vertices[iv] = ChVector3d(x, y, z);
                 normals[iv] = ChVector3d(0, 0, 0);
@@ -983,16 +1004,16 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
         // Specify the face vertices counter-clockwise.
         // Set the normal indices same as the vertex indices.
         unsigned int it = 0;
-        for (int iy = 0; iy < ny - 1; ++iy) {
-            for (int ix = 0; ix < nx - 1; ++ix) {
-                int v0 = iy * nx + ix;
-                idx_vertices[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
-                idx_normals[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
-                idx_uvs[it] = ChVector3i(v0, v0 + nx + 1, v0 + nx);
+        for (int iy = 0; iy < vis_ny - 1; ++iy) {
+            for (int ix = 0; ix < vis_nx - 1; ++ix) {
+                int v0 = iy * vis_nx + ix;
+                idx_vertices[it] = ChVector3i(v0, v0 + vis_nx + 1, v0 + vis_nx);
+                idx_normals[it] = ChVector3i(v0, v0 + vis_nx + 1, v0 + vis_nx);
+                idx_uvs[it] = ChVector3i(v0, v0 + vis_nx + 1, v0 + vis_nx);
                 ++it;
-                idx_vertices[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
-                idx_normals[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
-                idx_uvs[it] = ChVector3i(v0, v0 + 1, v0 + nx + 1);
+                idx_vertices[it] = ChVector3i(v0, v0 + 1, v0 + vis_nx + 1);
+                idx_normals[it] = ChVector3i(v0, v0 + 1, v0 + vis_nx + 1);
+                idx_uvs[it] = ChVector3i(v0, v0 + 1, v0 + vis_nx + 1);
                 ++it;
             }
         }

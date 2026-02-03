@@ -23,6 +23,7 @@
 // =============================================================================
 
 #include <iostream>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <cmath>
@@ -44,11 +45,11 @@
 
 #include "chrono/assets/ChVisualSystem.h"
 
-#ifdef CHRONO_IRRLICHT
-    #include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
-    #include "chrono_vehicle/visualization/ChVehicleVisualSystemIrrlicht.h"
-    using namespace chrono::irrlicht;
-#endif
+//#ifdef CHRONO_IRRLICHT
+//    #include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
+//    #include "chrono_vehicle/visualization/ChVehicleVisualSystemIrrlicht.h"
+//    using namespace chrono::irrlicht;
+//#endif
 #ifdef CHRONO_VSG
     #include "chrono_vehicle/visualization/ChVehicleVisualSystemVSG.h"
    // #include "chrono_vsg/ChVisualSystemVSG.h"
@@ -143,7 +144,7 @@ int main(int argc, char* argv[]) {
     RigidTerrain terrain(sys);
     
     // time the build - note the visual is what takes the longest. Try turning off the visual for a test of the collision shape speed
-    auto start = std::chrono::high_resolution_clock::now();
+    auto total_start = std::chrono::high_resolution_clock::now();
 
     std::string heightmap_file = GetChronoDataFile("vehicle/terrain/height_maps/test64.bmp"); // other terrain works but terrain3 flat spots are causing issues
     double hMin = 0;     // black in image is mapped to this value
@@ -282,6 +283,8 @@ int main(int argc, char* argv[]) {
     };
     
     // Generate Perlin noise heightfield
+    auto perlin_gen_start = std::chrono::high_resolution_clock::now();
+    
     std::vector<double> perlin_heights(perlinNx * perlinNy);
     double perlinDx = perlinWidth / (perlinNx - 1);
     double perlinDy = perlinLength / (perlinNy - 1);
@@ -310,10 +313,15 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    std::cout << "Perlin noise range: [" << noiseMin << ", " << noiseMax << "] -> scaled to [0, " << perlinAmplitude << "]" << std::endl;
+    auto perlin_gen_end = std::chrono::high_resolution_clock::now();
+    double perlin_gen_ms = std::chrono::duration<double, std::milli>(perlin_gen_end - perlin_gen_start).count();
+    std::cout << "Perlin noise generation: " << std::fixed << std::setprecision(2) << perlin_gen_ms << " ms\n";
+    std::cout << "Perlin noise range: [" << noiseMin << ", " << noiseMax << "] -> scaled to [0, " << perlinAmplitude << "]\n";
     
     // Add the Perlin noise patch using LOCAL heights (heightsAreLocal = true)
     // This is how you'd import terrain from Unreal/Unity where heights are already BASE-relative
+    auto patch_add_start = std::chrono::high_resolution_clock::now();
+    
     auto perlinPatch = terrain.AddPatch(patch_mat, 
                                          ChCoordsys<>(ChVector3d(0, 0, -6), QUNIT),  // Position offset (BASE sits at z=-6)
                                          perlin_heights,
@@ -323,6 +331,10 @@ int main(int argc, char* argv[]) {
                                          true,     // build visual mesh
                                          true);    // heightsAreLocal=true: heights are already BASE-relative [0, amplitude]
     perlinPatch->SetColor(ChColor(0.6f, 0.55f, 0.4f));  // Sandy/dirt color
+    
+    auto patch_add_end = std::chrono::high_resolution_clock::now();
+    double patch_add_ms = std::chrono::duration<double, std::milli>(patch_add_end - patch_add_start).count();
+    std::cout << "AddPatch (collision + visual mesh): " << std::fixed << std::setprecision(2) << patch_add_ms << " ms\n";
     
     // Example of ABSOLUTE heights (heightsAreLocal = false, default):
     // If you had real-world elevation data like GPS altitudes (e.g., 500m to 550m),
@@ -343,12 +355,50 @@ int main(int argc, char* argv[]) {
     //                                       0.001f, true, false);  // heightsAreLocal=false (default)
 
 
-
     // Initialize terrain
+    auto init_start = std::chrono::high_resolution_clock::now();
     terrain.Initialize();
+    auto init_end = std::chrono::high_resolution_clock::now();
+    double init_ms = std::chrono::duration<double, std::milli>(init_end - init_start).count();
+    std::cout << "terrain.Initialize(): " << std::fixed << std::setprecision(2) << init_ms << " ms\n";
+    
     // timer ouput
-    auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "Heightfield Terrain build time: " << std::chrono::duration<double, std::micro>(end - start).count() << " �s\n";
+    auto total_end = std::chrono::high_resolution_clock::now();
+    auto build_time_ms = std::chrono::duration<double, std::milli>(total_end - total_start).count();
+    
+    // Print terrain build statistics
+    std::cout << "\n========== HEIGHTFIELD TERRAIN STATISTICS ==========\n";
+    std::cout << "Build time: " << std::fixed << std::setprecision(2) << build_time_ms << " ms\n";
+    std::cout << "Grid resolution: " << perlinNx << " x " << perlinNy << " = " 
+              << (perlinNx * perlinNy) << " vertices\n";
+    std::cout << "Physical size: " << perlinWidth << " x " << perlinLength << " m\n";
+    std::cout << "Cell size: " << std::setprecision(4) << (perlinWidth / (perlinNx - 1)) << " m\n";
+    
+    // Memory estimate for collision shape (approximate)
+    size_t heightDataMB = (perlinNx * perlinNy * sizeof(double)) / (1024 * 1024);
+    size_t vertexCacheMB = 0;  // Only for small terrains
+    if (perlinNx * perlinNy <= 512 * 512) {
+        vertexCacheMB = (perlinNx * perlinNy * 3 * sizeof(double)) / (1024 * 1024);
+    }
+    size_t quadExtentsMB = 0;
+    if (perlinNx * perlinNy <= 1024 * 1024) {
+        quadExtentsMB = ((perlinNx - 1) * (perlinNy - 1) * 2 * sizeof(double)) / (1024 * 1024);
+    }
+    std::cout << "Estimated collision memory: " << (heightDataMB + vertexCacheMB + quadExtentsMB) << " MB\n";
+    std::cout << "  - Height data: " << heightDataMB << " MB\n";
+    std::cout << "  - Vertex cache: " << (vertexCacheMB > 0 ? std::to_string(vertexCacheMB) + " MB" : "disabled (large terrain)") << "\n";
+    std::cout << "  - Quad extents: " << (quadExtentsMB > 0 ? std::to_string(quadExtentsMB) + " MB" : "disabled (large terrain)") << "\n";
+    
+    // Tiling info
+    if (perlinNx * perlinNy > 1024 * 1024) {
+        int tileSize = 64;  // DEFAULT_TILE_SIZE
+        int tilesX = (perlinNx + tileSize - 1) / tileSize;
+        int tilesZ = (perlinNy + tileSize - 1) / tileSize;
+        std::cout << "Tiled cache: ENABLED (" << tilesX << " x " << tilesZ << " tiles, " << tileSize << "x" << tileSize << " each)\n";
+    } else {
+        std::cout << "Tiled cache: DISABLED (terrain fits in flat cache)\n";
+    }
+    std::cout << "====================================================\n\n";
 
     // driver
     double render_step = 1.0 / 50;
@@ -363,36 +413,55 @@ int main(int argc, char* argv[]) {
 
 
     std::shared_ptr<ChVehicleVisualSystem> vis;
-
-#ifdef CHRONO_IRRLICHT
-    ChVisualSystem::Type vis_type = ChVisualSystem::Type::IRRLICHT;
-    auto v = chrono_types::make_shared<ChVehicleVisualSystemIrrlicht>();
-    v->SetWindowTitle("Streaming Terrain Demo");
-    v->SetChaseCamera(ChVector3d(0, 0, 0.75), 6.0, 0.75);
-    v->Initialize();
-    v->AddLightDirectional();
-    v->AddSkyBox();
-    v->AddLogo();
-    v->AttachVehicle(&hmmwv.GetVehicle());
-    v->AttachDriver(&driver);
-#elif CHRONO_VSG
+//
+//#ifdef CHRONO_IRRLICHT
+//    ChVisualSystem::Type vis_type = ChVisualSystem::Type::IRRLICHT;
+//    auto v = chrono_types::make_shared<ChVehicleVisualSystemIrrlicht>();
+//    v->SetWindowTitle("Streaming Terrain Demo");
+//    v->SetChaseCamera(ChVector3d(0, 0, 0.75), 6.0, 0.75);
+//    v->Initialize();
+//    v->AddLightDirectional();
+//    v->AddSkyBox();
+//    v->AddLogo();
+//    v->AttachVehicle(&hmmwv.GetVehicle());
+//    v->AttachDriver(&driver);
+//#elif CHRONO_VSG
+#ifdef CHRONO_VSG   
     ChVisualSystem::Type vis_type = ChVisualSystem::Type::VSG;
     auto v = chrono_types::make_shared<ChVehicleVisualSystemVSG>();
     v->SetWindowTitle("Streaming Terrain Demo");
     v->SetChaseCamera(ChVector3d(0, 0, 0.75), 6.0, 0.75);
-    v->Initialize();
+    v->SetTargetRenderFPS(60); // keep the rendering at 60, unconnected to the step
     v->AttachVehicle(&hmmwv.GetVehicle());
     v->AttachDriver(&driver);
+    v->Initialize();
 #endif
 
     vis = v;
     hmmwv.GetVehicle().EnableRealtime(false);
     ///////////////////////////////////////////////////
 
-    // Sim loop
-    while (vis->Run()) {
-        double time = sys->GetChTime();
+    // Performance tracking variables
+    int frame_count = 0;
+    int report_interval = 100;  // Report every 100 frames
+    double total_step_time = 0.0;
+    double max_step_time = 0.0;
+    double min_step_time = 1e9;
+    auto last_report_time = std::chrono::high_resolution_clock::now();
+    
+    std::cout << "\n========== STARTING SIMULATION ==========\n";
+    std::cout << "Performance reports every " << report_interval << " frames\n";
+    std::cout << "==========================================\n\n";
 
+    // Sim loop
+int collision_count = 0;
+while (vis->Run()) {
+    auto step_start = std::chrono::high_resolution_clock::now();
+    
+    double time = sys->GetChTime();
+    
+    // Get contact count from container
+    collision_count = sys->GetContactContainer()->GetNumContacts();
         vis->BeginScene();
         vis->Render();
         vis->EndScene();
@@ -409,6 +478,39 @@ int main(int argc, char* argv[]) {
 
         vis->Advance(step_size);
         
+        // Performance tracking
+        auto step_end = std::chrono::high_resolution_clock::now();
+        double step_time_ms = std::chrono::duration<double, std::milli>(step_end - step_start).count();
+        total_step_time += step_time_ms;
+        max_step_time = std::max(max_step_time, step_time_ms);
+        min_step_time = std::min(min_step_time, step_time_ms);
+        frame_count++;
+        
+        // Periodic performance report
+        if (frame_count % report_interval == 0) {
+            auto now = std::chrono::high_resolution_clock::now();
+            double elapsed_sec = std::chrono::duration<double>(now - last_report_time).count();
+            double avg_step_ms = total_step_time / report_interval;
+            double fps = report_interval / elapsed_sec;
+            double realtime_factor = (step_size * report_interval) / elapsed_sec;
+            
+            std::cout << "Frame " << std::setw(6) << frame_count 
+                      << " | Sim time: " << std::fixed << std::setprecision(2) << std::setw(6) << time << "s"
+                      << " | Step: " << std::setprecision(2) << std::setw(5) << avg_step_ms << "ms"
+                      << " (min:" << std::setw(4) << min_step_time << ", max:" << std::setw(5) << max_step_time << ")"
+                      << " | FPS: " << std::setprecision(1) << std::setw(5) << fps
+                      << " | RTF: " << std::setprecision(2) << realtime_factor << "x"
+                  << " | Contacts: " << collision_count
+                  << " | Sphere Z: " << std::setprecision(3) << sphereObject->GetPos().z()
+                  << " | Ground: " << terrain.GetHeight(sphereObject->GetPos())
+                  << std::endl;
+            
+            // Reset for next interval
+            total_step_time = 0.0;
+            max_step_time = 0.0;
+            min_step_time = 1e9;
+            last_report_time = now;
+        }
     }
 
 

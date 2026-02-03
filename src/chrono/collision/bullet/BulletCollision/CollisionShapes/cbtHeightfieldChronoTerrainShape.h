@@ -479,6 +479,61 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     int getTileCountZ() const { return m_tileCountZ; }
     int getTileSize() const { return m_tileSize; }
 
+    /// Statistics structure for diagnostics
+    struct Statistics {
+        int totalVertices;
+        int gridWidth;
+        int gridHeight;
+        size_t heightDataBytes;
+        size_t vertexCacheBytes;
+        size_t quadExtentsBytes;
+        size_t tiledCacheBytes;
+        size_t acceleratorBytes;
+        size_t totalMemoryBytes;
+        bool usingVertexCache;
+        bool usingQuadExtents;
+        bool usingTiledCache;
+        int tileCountX;
+        int tileCountZ;
+        int tileSize;
+        int cachedTileCount;
+        int acceleratorChunkSize;
+    };
+    
+    /// Get memory and cache statistics
+    Statistics getStatistics() const {
+        Statistics s;
+        s.totalVertices = m_heightStickWidth * m_heightStickLength;
+        s.gridWidth = m_heightStickWidth;
+        s.gridHeight = m_heightStickLength;
+        s.heightDataBytes = s.totalVertices * sizeof(cbtScalar);
+        s.vertexCacheBytes = m_vertexCache.size() * sizeof(cbtVector3);
+        s.quadExtentsBytes = m_quadExtents.size() * sizeof(QuadExtents);
+        
+        // Count cached tiles
+        s.cachedTileCount = 0;
+        s.tiledCacheBytes = m_tiledCache.size() * sizeof(CachedTile);
+        for (const auto& tile : m_tiledCache) {
+            if (tile.valid) {
+                s.cachedTileCount++;
+                s.tiledCacheBytes += tile.vertices.size() * sizeof(cbtVector3);
+            }
+        }
+        
+        s.acceleratorBytes = m_vboundsGrid.size() * sizeof(Range);
+        s.totalMemoryBytes = s.heightDataBytes + s.vertexCacheBytes + s.quadExtentsBytes + 
+                            s.tiledCacheBytes + s.acceleratorBytes;
+        
+        s.usingVertexCache = m_useVertexCache;
+        s.usingQuadExtents = m_useQuadExtentsCache;
+        s.usingTiledCache = m_useTiledCache;
+        s.tileCountX = m_tileCountX;
+        s.tileCountZ = m_tileCountZ;
+        s.tileSize = m_tileSize;
+        s.acceleratorChunkSize = m_vboundsChunkSize;
+        return s;
+    }
+
 
   protected:
     // raw height data (non const -- owned by this shape)

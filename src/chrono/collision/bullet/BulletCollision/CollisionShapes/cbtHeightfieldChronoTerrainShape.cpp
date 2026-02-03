@@ -562,6 +562,14 @@ void cbtHeightfieldChronoTerrainShape::setUseTiledCache(bool enable, int tileSiz
         m_useVertexCache = false;
         m_vertexCache.clear();
         
+        // For very large terrains, also disable quad extents cache (uses too much memory)
+        // The accelerator chunks provide sufficient culling
+        const int totalVerts = m_heightStickWidth * m_heightStickLength;
+        if (totalVerts > 1024 * 1024) {
+            m_useQuadExtentsCache = false;
+            m_quadExtents.clear();
+        }
+        
         // Calculate tile grid dimensions
         m_tileCountX = (m_heightStickWidth + tileSize - 1) / tileSize;
         m_tileCountZ = (m_heightStickLength + tileSize - 1) / tileSize;
