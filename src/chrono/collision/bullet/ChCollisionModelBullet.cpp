@@ -427,7 +427,7 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     // TODO - this is likely not necessary anymore!
     bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up. 16 should cover most cases
 
-    bt_collision_object->setCollisionShape(bt_hf);
+    // Set custom material callback flag before injecting (injectShape will set the collision shape)
     bt_collision_object->setCollisionFlags(bt_collision_object->getCollisionFlags() |
                                                  cbtCollisionObject::CF_CUSTOM_MATERIAL_CALLBACK);
     // hand off to the normal inject routine

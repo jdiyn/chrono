@@ -908,7 +908,8 @@ std::shared_ptr<RigidTerrain::Patch> RigidTerrain::AddPatch(std::shared_ptr<ChCo
     auto hf_shape = std::make_shared<ChCollisionShapeHeightField>(material, nx, ny,  // number of samples in X/Y (i.e. heightmap resolution)
                                                       dimX, dimY,                    // field extent along X/Y
                                                       heights_for_shape,             // row-major double array, j=0 is the bottom row!!! Also, double input
-                                                      1.0f,                          // heightScale (IMPORTANT set as 1.0: heightScale is only needed for bullet for integer-based heightfield data types)
+                                                      1.0f,                          // heightScale: always 1.0 for double/float heights already in meters.
+                                                                                     // Only non-1.0 for integer-encoded height data (e.g. 16-bit BMP), which we don't use.
                                                       static_cast<float>(hmin),      // min height
                                                       static_cast<float>(hmax),      // max height
                                                       upAxis,                        // set upAxis as 0,1,2 correspond to xyz

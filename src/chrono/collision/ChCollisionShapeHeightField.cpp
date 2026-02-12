@@ -36,7 +36,7 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
                                                          int upAxis,
                                                          float sphere_radius,
                                                          bool flipQuadEdges)
-    : ChCollisionShape(Type::UNKNOWN_SHAPE, material), // shape agnostic here
+    : ChCollisionShape(Type::HEIGHTFIELD, material),
       m_nx(nx),
       m_ny(ny),
       m_width(dimX),
@@ -48,10 +48,6 @@ ChCollisionShapeHeightField::ChCollisionShapeHeightField(std::shared_ptr<ChConta
       m_upAxis(upAxis),
       sradius(sphere_radius),
       m_flipQuadEdges(flipQuadEdges) {
-    m_type = Type::HEIGHTFIELD;
-
-        // store the vertical centre that bullet does so SampleHeight can restore absolute heights correctly
-   // m_heightCentre = 0.5 * (m_minHeight + m_maxHeight);
 
     // if not using double precision, setup for bullet a float array
     // the alternative option is to set up a use of the cbtScalar, but dont want bullet headers here
@@ -238,7 +234,7 @@ void ChCollisionShapeHeightField::ArchiveIn(ChArchiveIn& archive_in) {
 #ifdef BT_USE_DOUBLE_PRECISION
     archive_in >> CHNVP(m_heights);
 #else
-    archive_in << CHNVP(m_heights_f);
+    archive_in >> CHNVP(m_heights_f);
 #endif
     archive_in >> CHNVP(m_heightScale);
     archive_in >> CHNVP(m_minHeight);
@@ -246,6 +242,14 @@ void ChCollisionShapeHeightField::ArchiveIn(ChArchiveIn& archive_in) {
     archive_in >> CHNVP(m_upAxis);
     archive_in >> CHNVP(sradius);
     archive_in >> CHNVP(m_flipQuadEdges);
+
+    // Recompute derived cell geometry after deserialization
+    if (m_nx > 1 && m_ny > 1) {
+        m_cellSizeU = m_width / double(m_nx - 1);
+        m_cellSizeV = m_length / double(m_ny - 1);
+        m_invCellSizeU = 1.0 / m_cellSizeU;
+        m_invCellSizeV = 1.0 / m_cellSizeV;
+    }
 }
 
 }  // namespace chrono

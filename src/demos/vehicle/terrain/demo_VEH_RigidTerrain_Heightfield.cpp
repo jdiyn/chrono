@@ -33,6 +33,14 @@
 #include <numeric>
 #include <limits>
 
+// ============================================================================
+// STRESS TEST KNOBS (edit and recompile)
+// ============================================================================
+namespace {
+// Max number of spheres created for the stress test.
+constexpr int kMaxSpheres = 100;
+}  // namespace
+
 #include "chrono/input_output/ChUtilsInputOutput.h"
 #include "chrono_vehicle/ChVehicleDataPath.h"
 #include "chrono_vehicle/driver/ChInteractiveDriver.h"
@@ -66,6 +74,9 @@ int main(int argc, char* argv[]) {
 
     double step_size = 1e-3;
     double tire_step_size = 1e-3;
+
+    // Stress test configuration
+    const int stress_spheres = std::max(1, kMaxSpheres);
 
     // Height map params
     double terrainWidth = 100;  // eg. scale across 100m x 100m
@@ -112,12 +123,23 @@ int main(int argc, char* argv[]) {
     my_obstacle->SetRot(QuatFromAngleX(30));
     my_obstacle->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/cubetexture_wood.png"));
 
-    // add a sphere for testing
-    auto sphereObject = chrono_types::make_shared<ChBodyEasySphere>(1, 1000, true, true, patch_mat);
+    // Stress test spheres (collision-heavy). By default only the first sphere is dynamic/visualized.
+    const double sphere_radius = 1.0;
+    const double sphere_density = 1000.0;
+    std::vector<std::shared_ptr<ChBody>> stress_sphere_bodies;
+    stress_sphere_bodies.reserve(stress_spheres);
+
+    auto sphereObject = chrono_types::make_shared<ChBodyEasySphere>(sphere_radius, sphere_density, true, true, patch_mat);
     sys->Add(sphereObject);
-    auto sphereStart = ChVector3d(6, -3, 4);
-    sphereObject->SetPos(sphereStart);
     sphereObject->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/spheretexture.png"));
+    stress_sphere_bodies.push_back(sphereObject);
+
+    for (int i = 1; i < stress_spheres; ++i) {
+        auto s = chrono_types::make_shared<ChBodyEasySphere>(sphere_radius, sphere_density, true, true, patch_mat);
+        sys->Add(s);
+        s->GetVisualShape(0)->SetTexture(GetChronoDataFile("textures/spheretexture.png"));
+        stress_sphere_bodies.push_back(s);
+    }
 
     // Set initial speed: rolling in horizontal direction
     double initial_angspeed = 5;
@@ -361,6 +383,53 @@ int main(int argc, char* argv[]) {
     auto init_end = std::chrono::high_resolution_clock::now();
     double init_ms = std::chrono::duration<double, std::milli>(init_end - init_start).count();
     std::cout << "terrain.Initialize(): " << std::fixed << std::setprecision(2) << init_ms << " ms\n";
+
+    // Place stress-test spheres AFTER terrain init (so we can query ground height)
+    // - A subset is placed near the surface to generate contacts.
+    // - The rest are placed high above the terrain to stress broadphase + early-out paths.
+    const int total_spheres = static_cast<int>(stress_sphere_bodies.size());
+    const bool disable_sphere_sphere = true;
+    const int dynamic_spheres = std::min(total_spheres, 200);
+    const int near_spheres = std::min(total_spheres, std::max(256, total_spheres / 10));
+    std::mt19937 stress_rng(123);
+    std::uniform_real_distribution<double> ux(-perlinWidth * 0.45, perlinWidth * 0.45);
+    std::uniform_real_distribution<double> uy(-perlinLength * 0.45, perlinLength * 0.45);
+
+    for (int i = 0; i < total_spheres; ++i) {
+        auto& body = stress_sphere_bodies[i];
+        if (disable_sphere_sphere) {
+            body->GetCollisionModel()->SetFamily(1);
+            body->GetCollisionModel()->SetFamily(1);
+            body->GetCollisionModel()->CollidesWith(0);  // collide with terrain (family 0)
+            body->GetCollisionModel()->DisallowCollisionsWith(1);  // no sphere-sphere collisions
+
+        }
+
+        body->SetFixed(i >= dynamic_spheres);
+
+        // Keep the original demo sphere for consistent behavior/comparison.
+        if (i == 0) {
+            body->SetPos(ChVector3d(6, -3, 4));
+        } else {
+            const double x = ux(stress_rng);
+            const double y = uy(stress_rng);
+            const double base_ground = terrain.GetHeight(ChVector3d(x, y, 0));
+            const double z = (i < near_spheres)
+                                 ? (base_ground + sphere_radius + 0.05 + 0.01 * (i % 10))
+                                 : (50.0 + 0.02 * (i - near_spheres));
+            body->SetPos(ChVector3d(x, y, z));
+        }
+        body->SetPosDt(ChVector3d(0, 0, 0));
+        body->SetAngVelParent(ChVector3d(0, 0, 0));
+    }
+
+    // Track the first sphere for reporting
+    auto sphereStart = sphereObject->GetPos();
+    std::cout << "Stress spheres: " << total_spheres
+              << " (dynamic=" << dynamic_spheres
+              << ", near_surface=" << near_spheres
+              << ", sphere_sphere_collisions=OFF"
+              << ")\n";
     
     // timer ouput
     auto total_end = std::chrono::high_resolution_clock::now();
@@ -454,7 +523,7 @@ int main(int argc, char* argv[]) {
     std::cout << "==========================================\n\n";
 
     // Sim loop
-int collision_count = 0;
+    int collision_count = 0;
 while (vis->Run()) {
     auto step_start = std::chrono::high_resolution_clock::now();
     

@@ -334,8 +334,6 @@ class cbtConvexHeightfieldAlgorithm : public cbtActivatingCollisionAlgorithm {
     }
 
   private:
-    void cbtConvexHeightfieldAlgorithm::collectSupportPoints(const cbtConvexShape* s,
-                                                             cbtAlignedObjectArray<cbtVector3>& out); 
     bool m_ownManifold{false};
     cbtPersistentManifold* m_manifoldPtr{nullptr};
     const cbtConvexShape* m_convex{nullptr};

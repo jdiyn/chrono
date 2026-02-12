@@ -42,18 +42,15 @@ void cbtHeightfieldChronoTerrainShape::sampleHeight(cbtScalar u,
     // orthogonal to upAxis (matching queryHeightAndGradient and the collision algorithms).
     // This helper now matches that convention.
 
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
-
     // Clamp into the valid footprint (queryHeightAndGradient also clamps, but this avoids huge values).
-    if (u < -halfW)
-        u = -halfW;
-    else if (u > halfW)
-        u = halfW;
-    if (v < -halfL)
-        v = -halfL;
-    else if (v > halfL)
-        v = halfL;
+    if (u < -m_halfWidth)
+        u = -m_halfWidth;
+    else if (u > m_halfWidth)
+        u = m_halfWidth;
+    if (v < -m_halfLength)
+        v = -m_halfLength;
+    else if (v > m_halfLength)
+        v = m_halfLength;
 
     // queryHeightAndGradient returns base-relative height (centered) and a unit normal in local coords.
     queryHeightAndGradient(u, v, outH, outGrad);
@@ -109,18 +106,17 @@ inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3
         return;
     }
 
+    // Try tiled cache for large terrains
+    if (m_useTiledCache && getVertexFromTiledCache(x, y, vtx)) {
+        return;
+    }
+
     // Fallback: compute vertex on the fly (centered + scaled).
     // Must match buildVertexCache exactly!
-    const int W = m_heightStickWidth;
-    const int L = m_heightStickLength;
-    const cbtScalar dx = m_width / cbtScalar(W - 1);
-    const cbtScalar dy = m_length / cbtScalar(L - 1);
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
-
+    // In unscaled space, grid step is always 1.0 (m_width = m_heightStickWidth - 1)
     const cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
-    const cbtScalar lx = x * dx - halfW;
-    const cbtScalar ly = y * dy - halfL;
+    const cbtScalar lx = cbtScalar(x) - m_halfWidth;
+    const cbtScalar ly = cbtScalar(y) - m_halfLength;
     switch (m_upAxis) {
         case 0:
             vtx.setValue(h, lx, ly);
@@ -169,6 +165,12 @@ void cbtHeightfieldChronoTerrainShape::rebuildCaches() {
         buildQuadExtents();
     if (m_vboundsChunkSize > 0)
         buildAccelerator(m_vboundsChunkSize);
+    // Invalidate tiled cache: vertex positions depend on m_localScaling,
+    // so cached tiles from before a scaling change are stale.
+    if (m_useTiledCache) {
+        for (auto& tile : m_tiledCache)
+            tile.valid = false;
+    }
 }
 
 void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
@@ -184,6 +186,12 @@ void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
         buildQuadExtents();
     if (m_vboundsChunkSize > 0)
         buildAccelerator(m_vboundsChunkSize);
+    // Invalidate tiled cache: tiles store pre-scaled vertices,
+    // so a scaling change makes them stale.
+    if (m_useTiledCache) {
+        for (auto& tile : m_tiledCache)
+            tile.valid = false;
+    }
 }
 
 cbtScalar cbtHeightfieldChronoTerrainShape::getHeight(int x, int z) const {
@@ -247,6 +255,8 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
 
     m_width = cbtScalar(heightStickWidth - 1);
     m_length = cbtScalar(heightStickLength - 1);
+    m_halfWidth = m_width * cbtScalar(0.5);
+    m_halfLength = m_length * cbtScalar(0.5);
 
     // BASE POSITIONING!!
     // The body frame is positioned at the BASE (z=0 in local coords corresponds to minHeight)
@@ -306,6 +316,14 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     // Build a chunked min/max accelerator by default (used by raycasts and collision chunk-culling).
     // 16 is a good tradeoff for typical heightfield tile sizes.
     buildAccelerator(16);
+
+    // NOTE: Do NOT pre-populate the tiled cache here. At construction time,
+    // m_localScaling is still (1,1,1) — the caller (injectHeightfield) sets
+    // the real scaling AFTER construction via setLocalScaling(). Any tiles
+    // built now would have wrong vertex coordinates and cause collision
+    // mismatches. The tiled cache will be lazily populated when the user
+    // calls updateTileCacheAroundPosition() from single-threaded code
+    // (e.g. a pre-collision callback).
 }
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
@@ -347,9 +365,24 @@ void cbtHeightfieldChronoTerrainShape::updateHeight(int x, int y, cbtScalar newH
     // Convert absolute height to base-relative
     m_heightfieldData[y * m_heightStickWidth + x] = newHeight_absolute - m_minHeight;
 
+    // Expand AABB if new height exceeds current bounds (critical for CRM/SCM dynamic terrain)
+    const cbtScalar newScaledH = (newHeight_absolute - m_minHeight) * m_heightScale;
+    if (newScaledH > m_localAabbMax[m_upAxis])
+        m_localAabbMax[m_upAxis] = newScaledH;
+    if (newScaledH < m_localAabbMin[m_upAxis])
+        m_localAabbMin[m_upAxis] = newScaledH;
+
     // Update caches using efficient region-based methods
     if (m_useVertexCache && !m_vertexCache.empty())
         rebuildVertexCacheRegion(x, y, x, y);
+    
+    // Invalidate affected tiled cache tile (stale vertex after height change)
+    if (m_useTiledCache && m_tileSize > 0) {
+        int tileX = x / m_tileSize;
+        int tileZ = y / m_tileSize;
+        if (tileX >= 0 && tileX < m_tileCountX && tileZ >= 0 && tileZ < m_tileCountZ)
+            m_tiledCache[tileZ * m_tileCountX + tileX].valid = false;
+    }
     
     // Quad extents: update the 4 quads that share this vertex
     if (m_useQuadExtentsCache && !m_quadExtents.empty())
@@ -365,6 +398,19 @@ void cbtHeightfieldChronoTerrainShape::updateHeights(const cbtScalar* newHeights
 
     for (int i = 0; i < numSamples; ++i) {
         m_heightfieldData[i] = newHeights_absolute[i] - m_minHeight;
+    }
+
+    // Recompute AABB height bounds from new data (critical for CRM/SCM dynamic terrain)
+    {
+        cbtScalar minH = m_heightfieldData[0] * m_heightScale;
+        cbtScalar maxH = minH;
+        for (int i = 1; i < numSamples; ++i) {
+            const cbtScalar h = m_heightfieldData[i] * m_heightScale;
+            if (h < minH) minH = h;
+            if (h > maxH) maxH = h;
+        }
+        m_localAabbMin[m_upAxis] = minH;
+        m_localAabbMax[m_upAxis] = maxH;
     }
 
     // Rebuild/refresh any dependent caches (vertex cache, quad extents cache, accelerator)
@@ -393,6 +439,17 @@ void cbtHeightfieldChronoTerrainShape::updateHeightRegion(int x0, int z0, int x1
             const int srcIdx = (z - z0) * regionW + (x - x0);
             const int dstIdx = z * m_heightStickWidth + x;
             m_heightfieldData[dstIdx] = newHeights_absolute[srcIdx] - m_minHeight;
+        }
+    }
+
+    // Expand AABB if any new height exceeds current bounds (critical for CRM/SCM dynamic terrain)
+    for (int z = z0; z <= z1; ++z) {
+        for (int x = x0; x <= x1; ++x) {
+            const cbtScalar h = m_heightfieldData[z * m_heightStickWidth + x] * m_heightScale;
+            if (h > m_localAabbMax[m_upAxis])
+                m_localAabbMax[m_upAxis] = h;
+            if (h < m_localAabbMin[m_upAxis])
+                m_localAabbMin[m_upAxis] = h;
         }
     }
     
@@ -459,17 +516,13 @@ void cbtHeightfieldChronoTerrainShape::rebuildVertexCacheRegion(int x0, int z0, 
         return;
     
     const int W = m_heightStickWidth;
-    const int L = m_heightStickLength;
-    const cbtScalar dx = m_width / cbtScalar(W - 1);
-    const cbtScalar dy = m_length / cbtScalar(L - 1);
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    // In unscaled space, grid step is always 1.0 (m_width = m_heightStickWidth - 1)
     
     for (int y = z0; y <= z1; ++y) {
         for (int x = x0; x <= x1; ++x) {
             cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
-            cbtScalar lx = x * dx - halfW;
-            cbtScalar ly = y * dy - halfL;
+            cbtScalar lx = cbtScalar(x) - m_halfWidth;
+            cbtScalar ly = cbtScalar(y) - m_halfLength;
             
             cbtVector3 v;
             switch (m_upAxis) {
@@ -730,8 +783,9 @@ bool cbtHeightfieldChronoTerrainShape::getVertexFromTiledCache(int x, int z, cbt
     const int tileX = x / m_tileSize;
     const int tileZ = z / m_tileSize;
     
-    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ)
+    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ) {
         return false;
+    }
     
     const CachedTile& tile = m_tiledCache[tileZ * m_tileCountX + tileX];
     if (!tile.valid)
@@ -839,19 +893,16 @@ void cbtHeightfieldChronoTerrainShape::buildVertexCache() {
     const int L = m_heightStickLength;
     m_vertexCache.resize(static_cast<std::size_t>(W) * L);
 
-    const cbtScalar dx = m_width / cbtScalar(W - 1);
-    const cbtScalar dy = m_length / cbtScalar(L - 1);
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
+    // In unscaled space, grid step is always 1.0 (m_width = m_heightStickWidth - 1)
 
     for (int y = 0; y < L; ++y)
         for (int x = 0; x < W; ++x) {
             // Get height (BASE is at 0, apply heightScale once)
             cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
 
-            // grid → local before scaling
-            cbtScalar lx = x * dx - halfW;
-            cbtScalar ly = y * dy - halfL;
+            // grid → local centered coords (step = 1.0 in unscaled space)
+            cbtScalar lx = cbtScalar(x) - m_halfWidth;
+            cbtScalar ly = cbtScalar(y) - m_halfLength;
 
             cbtVector3 v;
             switch (m_upAxis) {
@@ -1013,15 +1064,12 @@ void cbtHeightfieldChronoTerrainShape::queryHeightAndGradient(cbtScalar coordU,
                                                               cbtScalar coordV,
                                                               cbtScalar& outHeight,
                                                               cbtVector3& outNormalLocal) const {
-    // Grid spacing and half‑extents
-    cbtScalar dx = m_width / (m_heightStickWidth - 1);
-    cbtScalar dz = m_length / (m_heightStickLength - 1);
-    cbtScalar halfW = m_width * cbtScalar(0.5);
-    cbtScalar halfL = m_length * cbtScalar(0.5);
+    // In unscaled local space, grid step is always 1.0 (m_width = m_heightStickWidth - 1)
+    // So mapping from centered coords to grid indices is a simple offset
 
-    // Map (coordU,coordV) in centered meters to [0..width-1]/[0..length-1]
-    cbtScalar gridX = (coordU + halfW) / dx;
-    cbtScalar gridZ = (coordV + halfL) / dz;
+    // Map (coordU,coordV) in centered grid units to [0..width-1]/[0..length-1]
+    cbtScalar gridX = coordU + m_halfWidth;
+    cbtScalar gridZ = coordV + m_halfLength;
 
     // Clamp to valid cell range
     cbtClamp(gridX, cbtScalar(0), cbtScalar(m_heightStickWidth - 1) - cbtScalar(1e-6));
@@ -1042,12 +1090,11 @@ void cbtHeightfieldChronoTerrainShape::queryHeightAndGradient(cbtScalar coordU,
     // Compute local partial derivatives ∂H/∂u, ∂H/∂v in meters/meter
     // We can reuse the raw data directly:
     auto rawH = [&](int x, int z) { return getRawHeightFieldValue(x, z) * m_heightScale; };
-    cbtScalar dhdx = ((rawH(cellX + 1, cellZ) - rawH(cellX, cellZ)) * (1 - fracZ) +
-                      (rawH(cellX + 1, cellZ + 1) - rawH(cellX, cellZ + 1)) * fracZ) /
-                     dx;
-    cbtScalar dhdz = ((rawH(cellX, cellZ + 1) - rawH(cellX, cellZ)) * (1 - fracX) +
-                      (rawH(cellX + 1, cellZ + 1) - rawH(cellX + 1, cellZ)) * fracX) /
-                     dz;
+    // Grid step in unscaled space is 1.0, so gradient = height difference directly
+    cbtScalar dhdx = (rawH(cellX + 1, cellZ) - rawH(cellX, cellZ)) * (1 - fracZ) +
+                     (rawH(cellX + 1, cellZ + 1) - rawH(cellX, cellZ + 1)) * fracZ;
+    cbtScalar dhdz = (rawH(cellX, cellZ + 1) - rawH(cellX, cellZ)) * (1 - fracX) +
+                     (rawH(cellX + 1, cellZ + 1) - rawH(cellX + 1, cellZ)) * fracX;
 
     // Build the local‐space normal (upAxis defines which component is “height”)
     switch (m_upAxis) {
@@ -1296,9 +1343,7 @@ bool cbtHeightfieldChronoTerrainShape::sampleWorld(const cbtTransform& terrainFr
     }
 
     // Bounds check
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
-    if (u < -halfW || u > halfW || v < -halfL || v > halfL)
+    if (u < -m_halfWidth || u > m_halfWidth || v < -m_halfLength || v > m_halfLength)
         return false;
 
     // Query height and gradient (height is relative to BASE, i.e., local z=0)

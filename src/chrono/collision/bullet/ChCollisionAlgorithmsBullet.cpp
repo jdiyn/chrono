@@ -1710,44 +1710,6 @@ cbtConvexHeightfieldAlgorithm::~cbtConvexHeightfieldAlgorithm() {
         m_dispatcher->releaseManifold(m_manifoldPtr);
 }
 
-void cbtConvexHeightfieldAlgorithm::collectSupportPoints(const cbtConvexShape* s,
-                                                              cbtAlignedObjectArray<cbtVector3>& out) {
-    if (s->getShapeType() == BOX_SHAPE_PROXYTYPE) {
-        // Use support function sampling for boxes to ensure correct geometry
-        static const cbtVector3 directions[8] = {cbtVector3(1, 1, 1),   cbtVector3(-1, 1, 1),  cbtVector3(1, -1, 1),
-                                                 cbtVector3(-1, -1, 1), cbtVector3(1, 1, -1),  cbtVector3(-1, 1, -1),
-                                                 cbtVector3(1, -1, -1), cbtVector3(-1, -1, -1)};
-        out.resize(8);
-        for (int i = 0; i < 8; ++i) {
-            out[i] = s->localGetSupportingVertexWithoutMargin(directions[i]);
-        }
-        return;
-    }
-
-    // other shapes
-    if (s->isPolyhedral()) {
-        const auto* poly = (const cbtPolyhedralConvexShape*)s;
-        int nv = poly->getNumVertices();
-        constexpr int kMaxDenseVerts = 128;
-        int n = std::min(nv, kMaxDenseVerts);
-        out.resize(n);
-        for (int i = 0; i < n; ++i)
-            poly->getVertex(i, out[i]);
-        return;
-    }
-    {
-        // fallback - 26 direction GJK support map sample for other shapes
-        static const cbtVector3 dir[26] = {{1, 0, 0},   {-1, 0, 0},  {0, 1, 0},  {0, -1, 0},  {0, 0, 1},  {0, 0, -1},
-                                           {1, 1, 0},   {-1, 1, 0},  {1, -1, 0}, {-1, -1, 0}, {1, 0, 1},  {-1, 0, 1},
-                                           {1, 0, -1},  {-1, 0, -1}, {0, 1, 1},  {0, -1, 1},  {0, 1, -1}, {0, -1, -1},
-                                           {1, 1, 1},   {-1, 1, 1},  {1, -1, 1}, {-1, -1, 1}, {1, 1, -1}, {-1, 1, -1},
-                                           {1, -1, -1}, {-1, -1, -1}};
-        out.resize(26);
-        for (int i = 0; i < 26; ++i)
-            out[i] = s->localGetSupportingVertexWithoutMargin(dir[i]);
-    }
-}
-
 
 
 // ============================================================================
@@ -1797,12 +1759,8 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     const cbtTransform invTerrain = terrainTransform.inverse();
     const cbtVector3 invS = terrainShape->getInverseLocalScaling();
     
-    // Update tiled cache around convex object (for large terrains)
-    if (terrainShape->getUseTiledCache()) {
-        const cbtVector3 convexCenterLocal = invTerrain * convexTransform.getOrigin();
-        // const_cast is safe here - we're just updating the cache, not modifying terrain geometry
-        const_cast<cbtHeightfieldChronoTerrainShape*>(terrainShape)->updateTileCacheAroundPosition(convexCenterLocal);
-    }
+    // NOTE: Do not update tiled caches from narrowphase.
+    // Bullet can run processCollision in parallel (OpenMP), and cache mutation is not safe here.
 
     cbtScalar minU = SIMD_INFINITY, maxU = -SIMD_INFINITY;
     cbtScalar minV = SIMD_INFINITY, maxV = -SIMD_INFINITY;
@@ -1843,6 +1801,23 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
 
     if (gx1 < gx0 || gz1 < gz0)
         return;
+    
+    // EARLY HEIGHT REJECTION: Use accelerator for fast vertical bounds check
+    // Critical for large object counts - most objects are not near terrain surface
+    const cbtVector3 localScaling = terrainShape->getLocalScaling();
+    {
+        cbtScalar chunkMinH, chunkMaxH;
+        // Get bounds for the chunk containing the center cell
+        int centerX = (gx0 + gx1) / 2;
+        int centerZ = (gz0 + gz1) / 2;
+        if (terrainShape->getChunkHeightBounds(centerX, centerZ, chunkMinH, chunkMaxH)) {
+            const cbtScalar scaledMinH = chunkMinH * localScaling[upAxis];
+            const cbtScalar scaledMaxH = chunkMaxH * localScaling[upAxis];
+            // Object's vertical range in local space is [minUp, maxUp]
+            if (minUp > scaledMaxH + cutoff || maxUp < scaledMinH - cutoff)
+                return;
+        }
+    }
 
     const auto& vcache = terrainShape->getVertexCache();
     if (!vcache.empty() && (int)vcache.size() < W * L)
@@ -2230,7 +2205,9 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
             {
                 cbtScalar interpHeight;
                 cbtVector3 grad;
-                terrainShape->queryHeightAndGradient(gridX_q, gridZ_q, interpHeight, grad);
+                // queryHeightAndGradient expects centered-meter coords, NOT grid-index space.
+                // queryLocalUnscaled[axisU/V] are already in centered-meter space.
+                terrainShape->queryHeightAndGradient(queryLocalUnscaled[axisU], queryLocalUnscaled[axisV], interpHeight, grad);
                 
                 // Check if we got a valid result (height will be non-zero for valid terrain points)
                 if (gridX_q >= 0 && gridX_q <= cbtScalar(W - 1) && 
@@ -2249,11 +2226,11 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
                     // If point is clearly below terrain (deep penetration), we can
                     // use the gradient to estimate contact without full triangle search
                     if (heightDiff < -cutoff * cbtScalar(2.0)) {
-                        // Deep penetration: use analytical normal from gradient
-                        cbtVector3 localNormal(0, 0, 0);
-                        localNormal[upAxis] = cbtScalar(1);
-                        localNormal[axisU] = -grad[axisU];
-                        localNormal[axisV] = -grad[axisV];
+                        // Deep penetration: use analytical normal from gradient.
+                        // queryHeightAndGradient returns a normalized normal in unscaled local space.
+                        // Apply inverse-transpose scaling correction (S^{-T} = S^{-1} for diagonal S)
+                        // to match the scaled-space normals from the triangle paths.
+                        cbtVector3 localNormal(grad.x() * invS.x(), grad.y() * invS.y(), grad.z() * invS.z());
                         if (localNormal.length2() > SIMD_EPSILON)
                             localNormal.normalize();
                         
@@ -2570,10 +2547,8 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     const cbtVector3 invS = terrainShape->getInverseLocalScaling();
     const cbtVector3 localScaling = terrainShape->getLocalScaling();
     
-    // Update tiled cache around sphere (for large terrains)
-    if (terrainShape->getUseTiledCache()) {
-        const_cast<cbtHeightfieldChronoTerrainShape*>(terrainShape)->updateTileCacheAroundPosition(sphereCenterLocal);
-    }
+    // NOTE: Do not update tiled caches from narrowphase.
+    // Bullet can run processCollision in parallel (OpenMP), and cache mutation is not safe here.
 
     const int W = terrainShape->getWidth();
     const int L = terrainShape->getLength();
@@ -2607,6 +2582,21 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
     int cz = (int)std::floor((double)gridZ);
     cx = cbtMax(0, cbtMin(cx, W - 2));
     cz = cbtMax(0, cbtMin(cz, L - 2));
+    
+    // EARLY HEIGHT REJECTION: Use accelerator chunks for fast height bounds check
+    // This is critical for 50K+ objects - most spheres are NOT near the terrain surface
+    {
+        const cbtScalar sphereUp = sphereCenterLocal[upAxis];
+        cbtScalar chunkMinH, chunkMaxH;
+        if (terrainShape->getChunkHeightBounds(cx, cz, chunkMinH, chunkMaxH)) {
+            // Apply local scaling to chunk heights
+            const cbtScalar scaledMinH = chunkMinH * localScaling[upAxis];
+            const cbtScalar scaledMaxH = chunkMaxH * localScaling[upAxis];
+            // Reject if sphere is completely above or below the terrain chunk
+            if (sphereUp > scaledMaxH + cutoff || sphereUp < scaledMinH - cutoff)
+                return;
+        }
+    }
 
     cbtVector3 bestPointLocal(0, 0, 0);
     cbtVector3 bestNormalLocal(0, 0, 0);

@@ -310,6 +310,22 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         outMaxH = r.max * sUp;
         return true;
     }
+    
+    /// Get height bounds for the accelerator chunk containing a given cell (x, z).
+    /// This converts cell coordinates to chunk coordinates internally.
+    /// Returns unscaled heights (caller applies localScaling if needed).
+    bool getChunkHeightBounds(int cellX, int cellZ, cbtScalar& outMinH, cbtScalar& outMaxH) const {
+        if (!hasAccelerator())
+            return false;
+        const int chunkX = cellX / m_vboundsChunkSize;
+        const int chunkZ = cellZ / m_vboundsChunkSize;
+        if (chunkX < 0 || chunkZ < 0 || chunkX >= m_vboundsGridWidth || chunkZ >= m_vboundsGridLength)
+            return false;
+        const Range& r = m_vboundsGrid[chunkX + chunkZ * m_vboundsGridWidth];
+        outMinH = r.min;  // Return unscaled - caller handles scaling
+        outMaxH = r.max;
+        return true;
+    }
 
     // assumes the user handles whether the chunk exists or not
     const Range& GetVBoundsChunk(int cx, int cz) const {
@@ -341,10 +357,11 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         }
 
         // Fallback: compute from raw heights (no prebuilt cache)
-        const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale - m_localOrigin[m_upAxis];
-        const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale - m_localOrigin[m_upAxis];
-        const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
-        const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale - m_localOrigin[m_upAxis];
+        // Heights are already BASE-relative (shifted by -minH in constructor)
+        const cbtScalar h00 = getRawHeightFieldValue(x, z) * m_heightScale;
+        const cbtScalar h10 = getRawHeightFieldValue(x + 1, z) * m_heightScale;
+        const cbtScalar h01 = getRawHeightFieldValue(x, z + 1) * m_heightScale;
+        const cbtScalar h11 = getRawHeightFieldValue(x + 1, z + 1) * m_heightScale;
         const cbtScalar minH = cbtMin(cbtMin(h00, h10), cbtMin(h01, h11));
         const cbtScalar maxH = cbtMax(cbtMax(h00, h10), cbtMax(h01, h11));
         outMinH = minH * sUp;
@@ -468,7 +485,10 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     void setTileCacheRadius(int radius) { m_tileCacheRadius = radius; }
     int getTileCacheRadius() const { return m_tileCacheRadius; }
     
-    /// Update tile cache around a world position (call from collision detection)
+    /// Update tile cache around a world position.
+    /// NOTE: This mutates internal caches; do not call from Bullet's parallel
+    /// narrowphase (e.g., cbtCollisionDispatcherMt/OpenMP). Call only from
+    /// single-threaded code outside collision dispatch.
     void updateTileCacheAroundPosition(const cbtVector3& localPos);
     
     /// Get vertex from tiled cache (returns false if tile not cached)
@@ -548,6 +568,8 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     cbtScalar m_maxHeight;
     cbtScalar m_width;   // = heightStickWidth  – 1
     cbtScalar m_length;  // = heightStickLength – 1
+    cbtScalar m_halfWidth;   // = m_width * 0.5  (cached for hot-path use)
+    cbtScalar m_halfLength;  // = m_length * 0.5  (cached for hot-path use)
     int m_upAxis;
     bool m_flipQuadEdges;
     bool m_useDiamondSubdivision;

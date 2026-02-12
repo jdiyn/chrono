@@ -46,12 +46,6 @@ namespace chrono {
 class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
   public:
 
-    /// World space query: returns true if the point projects inside the patch
-    bool SampleWorld(const ChCoordsys<>& patchFrame,  // body/patch frame
-                     const ChVector3d& worldPos,      // query point
-                     double& heightOut,               // abs world height on HF
-                     ChVector3d& normalOut) const;
-
     ChCollisionShapeHeightField();
     /// Construct from a regular grid of heights.
     ChCollisionShapeHeightField(std::shared_ptr<ChContactMaterial> material,    ///< [in] contact material
@@ -137,10 +131,12 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     ChCoordsys<> m_patchFrame;  ///< patch frame in world space
     int                     m_nx, m_ny;
     double                  m_width, m_length;
-    double m_heightCentre;  // (minH+maxH)/2
     std::vector<double>     m_heights;
 #ifndef BT_USE_DOUBLE_PRECISION
-    std::vector<float>      m_heights_f; // float array if not using chrono's bullet double setup
+    // Both arrays are intentionally kept: m_heights (double) is used by RayHit() for full-precision
+    // bilinear queries at the Chrono level; m_heights_f (float) is passed to the Bullet collision
+    // shape which operates in single precision. Trade-off: ~2x height storage for accuracy.
+    std::vector<float>      m_heights_f;
 #endif
     float                   m_heightScale, m_minHeight, m_maxHeight;
     int                     m_upAxis;
