@@ -35,14 +35,14 @@ namespace chrono {
 /// - **Up-axis** determines which local axis is height: 0=X, 1=Y, 2=Z (default Z)
 ///
 /// ## Caching Behavior
-/// For small heightfields (≤512×512), vertex caching is automatic. For larger terrains,
-/// a tiled LOD cache can be enabled with SetTiledCacheConfig() to efficiently handle
-/// million-vertex heightfields with O(1) collision performance.
+/// For small heightfields (≤512×512), vertex caching is automatic. Larger terrains
+/// rely on quad extents + on-the-fly vertex computation, which is fast enough for
+/// O(1) neighborhood queries.
 ///
 /// ## Performance Notes
 /// - Sphere collision: O(1) analytical bilinear interpolation + ClosestPointOnTriangle
 /// - Convex collision: O(1) height rejection + support sampling (26-42 directions)
-/// - Large terrain: Tiled caching with dirty region tracking
+/// - Large terrain: Quad extents cache + accelerator grid for spatial culling
 class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
   public:
 
@@ -103,26 +103,6 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
                 double& out_height,                 ///< [out] height at the query position (in world space)
                 ChVector3d& out_normal) const;      ///< [out] normal at the query position (in world space)
 
-    //
-    // Tiled Cache Configuration (for large terrains > 512x512)
-    // These settings are applied when the collision model is built.
-    //
-
-    /// Enable tiled LOD caching for large heightfields.
-    /// When enabled, only tiles near active collision queries are cached at full resolution.
-    /// @param tileSize Grid cells per tile edge (default 64, must be power of 2)
-    /// @param cacheRadius Number of tiles to cache at full resolution around query point
-    void SetTiledCacheConfig(int tileSize = 64, int cacheRadius = 2) {
-        m_tiledCacheTileSize = tileSize;
-        m_tiledCacheRadius = cacheRadius;
-    }
-
-    /// Get tile size for tiled cache (0 if not configured)
-    int GetTiledCacheTileSize() const { return m_tiledCacheTileSize; }
-
-    /// Get cache radius for tiled cache (0 if not configured)
-    int GetTiledCacheRadius() const { return m_tiledCacheRadius; }
-        
     void ArchiveOut(ChArchiveOut& archive);
     void ArchiveIn(ChArchiveIn& archive);
 
@@ -149,9 +129,6 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
      double m_invCellSizeU;   // 1/m_cellSizeU
      double m_invCellSizeV;   // 1/m_cellSizeV
 
-    // Tiled cache configuration (applied when collision model is built)
-    int m_tiledCacheTileSize = 0;   // 0 = auto (use flat cache for small HFs)
-    int m_tiledCacheRadius = 2;     // Number of tiles at full res
 };
 
 

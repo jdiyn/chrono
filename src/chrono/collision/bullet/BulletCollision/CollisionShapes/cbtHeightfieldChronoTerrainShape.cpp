@@ -106,12 +106,7 @@ inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3
         return;
     }
 
-    // Try tiled cache for large terrains
-    if (m_useTiledCache && getVertexFromTiledCache(x, y, vtx)) {
-        return;
-    }
-
-    // Fallback: compute vertex on the fly (centered + scaled).
+    // Compute vertex on the fly (centered + scaled).
     // Must match buildVertexCache exactly!
     // In unscaled space, grid step is always 1.0 (m_width = m_heightStickWidth - 1)
     const cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
@@ -165,12 +160,6 @@ void cbtHeightfieldChronoTerrainShape::rebuildCaches() {
         buildQuadExtents();
     if (m_vboundsChunkSize > 0)
         buildAccelerator(m_vboundsChunkSize);
-    // Invalidate tiled cache: vertex positions depend on m_localScaling,
-    // so cached tiles from before a scaling change are stale.
-    if (m_useTiledCache) {
-        for (auto& tile : m_tiledCache)
-            tile.valid = false;
-    }
 }
 
 void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
@@ -186,12 +175,6 @@ void cbtHeightfieldChronoTerrainShape::setLocalScaling(const cbtVector3& s) {
         buildQuadExtents();
     if (m_vboundsChunkSize > 0)
         buildAccelerator(m_vboundsChunkSize);
-    // Invalidate tiled cache: tiles store pre-scaled vertices,
-    // so a scaling change makes them stale.
-    if (m_useTiledCache) {
-        for (auto& tile : m_tiledCache)
-            tile.valid = false;
-    }
 }
 
 cbtScalar cbtHeightfieldChronoTerrainShape::getHeight(int x, int z) const {
@@ -299,13 +282,10 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     if (totalVertices <= m_autoCacheThreshold) {
         // Small terrain: use flat vertex cache (fast, fits in memory)
         m_useVertexCache = true;
-    } else if (totalVertices > 1024 * 1024) {
-        // Large terrain (1024x1024+): use tiled cache with LOD
-        // This avoids ~48MB+ memory usage while keeping nearby tiles fast
-        setUseTiledCache(true, DEFAULT_TILE_SIZE);
     }
-    // Medium terrains (512x512 to 1024x1024) don't use vertex cache by default
-    // They can still be fast with quad extents + on-the-fly vertex computation
+    // Medium/large terrains rely on quad extents + on-the-fly vertex computation.
+    // The O(1) neighborhood lookups (3x3 for sphere, small AABB for convex) make
+    // flat caching unnecessary — the bottleneck is the solver, not vertex access.
 
     // build caching first time
     if (m_useQuadExtentsCache)
@@ -316,14 +296,6 @@ cbtHeightfieldChronoTerrainShape::cbtHeightfieldChronoTerrainShape(int heightSti
     // Build a chunked min/max accelerator by default (used by raycasts and collision chunk-culling).
     // 16 is a good tradeoff for typical heightfield tile sizes.
     buildAccelerator(16);
-
-    // NOTE: Do NOT pre-populate the tiled cache here. At construction time,
-    // m_localScaling is still (1,1,1) — the caller (injectHeightfield) sets
-    // the real scaling AFTER construction via setLocalScaling(). Any tiles
-    // built now would have wrong vertex coordinates and cause collision
-    // mismatches. The tiled cache will be lazily populated when the user
-    // calls updateTileCacheAroundPosition() from single-threaded code
-    // (e.g. a pre-collision callback).
 }
 
 cbtHeightfieldChronoTerrainShape::~cbtHeightfieldChronoTerrainShape() {
@@ -375,14 +347,6 @@ void cbtHeightfieldChronoTerrainShape::updateHeight(int x, int y, cbtScalar newH
     // Update caches using efficient region-based methods
     if (m_useVertexCache && !m_vertexCache.empty())
         rebuildVertexCacheRegion(x, y, x, y);
-    
-    // Invalidate affected tiled cache tile (stale vertex after height change)
-    if (m_useTiledCache && m_tileSize > 0) {
-        int tileX = x / m_tileSize;
-        int tileZ = y / m_tileSize;
-        if (tileX >= 0 && tileX < m_tileCountX && tileZ >= 0 && tileZ < m_tileCountZ)
-            m_tiledCache[tileZ * m_tileCountX + tileX].valid = false;
-    }
     
     // Quad extents: update the 4 quads that share this vertex
     if (m_useQuadExtentsCache && !m_quadExtents.empty())
@@ -596,225 +560,6 @@ void cbtHeightfieldChronoTerrainShape::updateAcceleratorRegion(int x0, int z0, i
                 }
             }
             m_vboundsGrid[cx + cz * m_vboundsGridWidth] = r;
-        }
-    }
-}
-
-// ============================================================================
-// TILED LOD VERTEX CACHE - for large terrains (2048x2048+)
-// ============================================================================
-// Divides terrain into tiles (e.g., 64x64), caches only nearby tiles at full
-// resolution. Distant tiles use lower LOD or aren't cached.
-
-void cbtHeightfieldChronoTerrainShape::setUseTiledCache(bool enable, int tileSize) {
-    m_useTiledCache = enable;
-    m_tileSize = tileSize;
-    
-    if (enable) {
-        // Disable flat vertex cache when using tiled
-        m_useVertexCache = false;
-        m_vertexCache.clear();
-        
-        // For very large terrains, also disable quad extents cache (uses too much memory)
-        // The accelerator chunks provide sufficient culling
-        const int totalVerts = m_heightStickWidth * m_heightStickLength;
-        if (totalVerts > 1024 * 1024) {
-            m_useQuadExtentsCache = false;
-            m_quadExtents.clear();
-        }
-        
-        // Calculate tile grid dimensions
-        m_tileCountX = (m_heightStickWidth + tileSize - 1) / tileSize;
-        m_tileCountZ = (m_heightStickLength + tileSize - 1) / tileSize;
-        
-        // Allocate tile array (tiles are populated on demand)
-        m_tiledCache.resize(m_tileCountX * m_tileCountZ);
-        for (auto& tile : m_tiledCache) {
-            tile.valid = false;
-            tile.lodLevel = -1;
-        }
-        
-        m_lastCacheCenterTileX = -1;
-        m_lastCacheCenterTileZ = -1;
-    } else {
-        m_tiledCache.clear();
-        m_tileCountX = 0;
-        m_tileCountZ = 0;
-    }
-}
-
-void cbtHeightfieldChronoTerrainShape::buildTileCache(int tileX, int tileZ, int lodLevel) {
-    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ)
-        return;
-    
-    CachedTile& tile = m_tiledCache[tileZ * m_tileCountX + tileX];
-    
-    // LOD step: 1 = full res, 2 = half res, 4 = quarter res, etc.
-    const int lodStep = 1 << lodLevel;
-    const int effectiveTileSize = (m_tileSize + lodStep - 1) / lodStep;
-    
-    tile.vertices.resize(effectiveTileSize * effectiveTileSize);
-    tile.lodLevel = lodLevel;
-    tile.tileX = tileX;
-    tile.tileZ = tileZ;
-    
-    const int W = m_heightStickWidth;
-    const int L = m_heightStickLength;
-    const cbtScalar dx = m_width / cbtScalar(W - 1);
-    const cbtScalar dy = m_length / cbtScalar(L - 1);
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
-    
-    const int baseX = tileX * m_tileSize;
-    const int baseZ = tileZ * m_tileSize;
-    
-    for (int lz = 0; lz < effectiveTileSize; ++lz) {
-        for (int lx = 0; lx < effectiveTileSize; ++lx) {
-            int gx = baseX + lx * lodStep;
-            int gz = baseZ + lz * lodStep;
-            
-            // Clamp to grid bounds
-            gx = cbtMin(gx, W - 1);
-            gz = cbtMin(gz, L - 1);
-            
-            cbtScalar h = getRawHeightFieldValue(gx, gz) * m_heightScale;
-            cbtScalar px = gx * dx - halfW;
-            cbtScalar pz = gz * dy - halfL;
-            
-            cbtVector3 v;
-            switch (m_upAxis) {
-                case 0: v.setValue(h, px, pz); break;
-                case 1: v.setValue(px, h, pz); break;
-                default: v.setValue(px, pz, h); break;
-            }
-            v *= m_localScaling;
-            tile.vertices[lz * effectiveTileSize + lx] = v;
-        }
-    }
-    
-    tile.valid = true;
-}
-
-void cbtHeightfieldChronoTerrainShape::updateTileCacheAroundPosition(const cbtVector3& localPos) {
-    if (!m_useTiledCache || m_tileSize <= 0)
-        return;
-    
-    // Find which tile the position is in
-    int axisU, axisV;
-    getPlanarAxes(axisU, axisV);
-    
-    const cbtScalar halfW = m_width * cbtScalar(0.5);
-    const cbtScalar halfL = m_length * cbtScalar(0.5);
-    
-    // Convert local position to grid coordinates
-    const cbtVector3 unscaled = localPos * m_invLocalScaling;
-    const cbtScalar gridX = (unscaled[axisU] + halfW) / (m_width / cbtScalar(m_heightStickWidth - 1));
-    const cbtScalar gridZ = (unscaled[axisV] + halfL) / (m_length / cbtScalar(m_heightStickLength - 1));
-    
-    const int centerTileX = cbtMax(0, cbtMin(static_cast<int>(gridX) / m_tileSize, m_tileCountX - 1));
-    const int centerTileZ = cbtMax(0, cbtMin(static_cast<int>(gridZ) / m_tileSize, m_tileCountZ - 1));
-    
-    // Skip if we haven't moved to a new tile
-    if (centerTileX == m_lastCacheCenterTileX && centerTileZ == m_lastCacheCenterTileZ)
-        return;
-    
-    const int oldCenterX = m_lastCacheCenterTileX;
-    const int oldCenterZ = m_lastCacheCenterTileZ;
-    m_lastCacheCenterTileX = centerTileX;
-    m_lastCacheCenterTileZ = centerTileZ;
-    
-    // INCREMENTAL UPDATE: Only process tiles that changed status
-    // Instead of iterating all tiles, we identify:
-    // 1. Tiles that left the cache radius (invalidate)
-    // 2. Tiles that entered the cache radius (build)
-    // 3. Tiles that changed LOD level (rebuild)
-    
-    const int fullRadius = m_tileCacheRadius;
-    const int lodRadius = m_tileCacheRadius * 2;
-    
-    // Determine the bounding box of tiles that need processing
-    // This is the union of old and new cache regions
-    const int minTileX = cbtMax(0, cbtMin(oldCenterX, centerTileX) - lodRadius);
-    const int maxTileX = cbtMin(m_tileCountX - 1, cbtMax(oldCenterX, centerTileX) + lodRadius);
-    const int minTileZ = cbtMax(0, cbtMin(oldCenterZ, centerTileZ) - lodRadius);
-    const int maxTileZ = cbtMin(m_tileCountZ - 1, cbtMax(oldCenterZ, centerTileZ) + lodRadius);
-    
-    for (int tz = minTileZ; tz <= maxTileZ; ++tz) {
-        for (int tx = minTileX; tx <= maxTileX; ++tx) {
-            // Compute distances to old and new centers
-            const int oldDistX = (oldCenterX >= 0) ? std::abs(tx - oldCenterX) : 9999;
-            const int oldDistZ = (oldCenterZ >= 0) ? std::abs(tz - oldCenterZ) : 9999;
-            const int oldDist = cbtMax(oldDistX, oldDistZ);
-            
-            const int newDistX = std::abs(tx - centerTileX);
-            const int newDistZ = std::abs(tz - centerTileZ);
-            const int newDist = cbtMax(newDistX, newDistZ);
-            
-            // Determine old and new LOD levels
-            // -1 = not cached, 0 = full res, 1 = half res
-            int oldLOD = (oldDist <= fullRadius) ? 0 : (oldDist <= lodRadius) ? 1 : -1;
-            int newLOD = (newDist <= fullRadius) ? 0 : (newDist <= lodRadius) ? 1 : -1;
-            
-            // Skip if status unchanged
-            if (oldLOD == newLOD)
-                continue;
-            
-            CachedTile& tile = m_tiledCache[tz * m_tileCountX + tx];
-            
-            if (newLOD < 0) {
-                // Tile left cache radius - invalidate
-                if (tile.valid) {
-                    tile.valid = false;
-                    tile.vertices.clear();
-                    tile.vertices.shrink_to_fit();  // Release memory
-                }
-            } else if (newLOD != oldLOD || !tile.valid || tile.lodLevel != newLOD) {
-                // Tile entered cache radius or changed LOD - build/rebuild
-                buildTileCache(tx, tz, newLOD);
-            }
-        }
-    }
-}
-
-bool cbtHeightfieldChronoTerrainShape::getVertexFromTiledCache(int x, int z, cbtVector3& outVertex) const {
-    if (!m_useTiledCache || m_tiledCache.empty())
-        return false;
-    
-    const int tileX = x / m_tileSize;
-    const int tileZ = z / m_tileSize;
-    
-    if (tileX < 0 || tileZ < 0 || tileX >= m_tileCountX || tileZ >= m_tileCountZ) {
-        return false;
-    }
-    
-    const CachedTile& tile = m_tiledCache[tileZ * m_tileCountX + tileX];
-    if (!tile.valid)
-        return false;
-    
-    const int lodStep = 1 << tile.lodLevel;
-    const int localX = (x - tileX * m_tileSize) / lodStep;
-    const int localZ = (z - tileZ * m_tileSize) / lodStep;
-    const int effectiveTileSize = (m_tileSize + lodStep - 1) / lodStep;
-    
-    if (localX < 0 || localZ < 0 || localX >= effectiveTileSize || localZ >= effectiveTileSize)
-        return false;
-    
-    outVertex = tile.vertices[localZ * effectiveTileSize + localX];
-    return true;
-}
-
-void cbtHeightfieldChronoTerrainShape::invalidateTilesInRegion(int x0, int z0, int x1, int z1) {
-    if (!m_useTiledCache)
-        return;
-    
-    const int tx0 = cbtMax(0, x0 / m_tileSize);
-    const int tz0 = cbtMax(0, z0 / m_tileSize);
-    const int tx1 = cbtMin(m_tileCountX - 1, x1 / m_tileSize);
-    const int tz1 = cbtMin(m_tileCountZ - 1, z1 / m_tileSize);
-    
-    for (int tz = tz0; tz <= tz1; ++tz) {
-        for (int tx = tx0; tx <= tx1; ++tx) {
-            m_tiledCache[tz * m_tileCountX + tx].valid = false;
         }
     }
 }

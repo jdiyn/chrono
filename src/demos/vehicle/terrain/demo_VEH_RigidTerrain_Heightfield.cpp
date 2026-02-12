@@ -457,16 +457,6 @@ int main(int argc, char* argv[]) {
     std::cout << "  - Height data: " << heightDataMB << " MB\n";
     std::cout << "  - Vertex cache: " << (vertexCacheMB > 0 ? std::to_string(vertexCacheMB) + " MB" : "disabled (large terrain)") << "\n";
     std::cout << "  - Quad extents: " << (quadExtentsMB > 0 ? std::to_string(quadExtentsMB) + " MB" : "disabled (large terrain)") << "\n";
-    
-    // Tiling info
-    if (perlinNx * perlinNy > 1024 * 1024) {
-        int tileSize = 64;  // DEFAULT_TILE_SIZE
-        int tilesX = (perlinNx + tileSize - 1) / tileSize;
-        int tilesZ = (perlinNy + tileSize - 1) / tileSize;
-        std::cout << "Tiled cache: ENABLED (" << tilesX << " x " << tilesZ << " tiles, " << tileSize << "x" << tileSize << " each)\n";
-    } else {
-        std::cout << "Tiled cache: DISABLED (terrain fits in flat cache)\n";
-    }
     std::cout << "====================================================\n\n";
 
     // driver
@@ -499,7 +489,7 @@ int main(int argc, char* argv[]) {
     ChVisualSystem::Type vis_type = ChVisualSystem::Type::VSG;
     auto v = chrono_types::make_shared<ChVehicleVisualSystemVSG>();
     v->SetWindowTitle("Streaming Terrain Demo");
-    v->SetChaseCamera(ChVector3d(0, 0, 0.75), 6.0, 0.75);
+    v->SetChaseCamera(ChVector3d(0, 0, 15.75), 16.0, 0.75);
     v->SetTargetRenderFPS(60); // keep the rendering at 60, unconnected to the step
     v->AttachVehicle(&hmmwv.GetVehicle());
     v->AttachDriver(&driver);
@@ -547,39 +537,39 @@ while (vis->Run()) {
 
         vis->Advance(step_size);
         
-        // Performance tracking
-        auto step_end = std::chrono::high_resolution_clock::now();
-        double step_time_ms = std::chrono::duration<double, std::milli>(step_end - step_start).count();
-        total_step_time += step_time_ms;
-        max_step_time = std::max(max_step_time, step_time_ms);
-        min_step_time = std::min(min_step_time, step_time_ms);
-        frame_count++;
-        
-        // Periodic performance report
-        if (frame_count % report_interval == 0) {
-            auto now = std::chrono::high_resolution_clock::now();
-            double elapsed_sec = std::chrono::duration<double>(now - last_report_time).count();
-            double avg_step_ms = total_step_time / report_interval;
-            double fps = report_interval / elapsed_sec;
-            double realtime_factor = (step_size * report_interval) / elapsed_sec;
-            
-            std::cout << "Frame " << std::setw(6) << frame_count 
-                      << " | Sim time: " << std::fixed << std::setprecision(2) << std::setw(6) << time << "s"
-                      << " | Step: " << std::setprecision(2) << std::setw(5) << avg_step_ms << "ms"
-                      << " (min:" << std::setw(4) << min_step_time << ", max:" << std::setw(5) << max_step_time << ")"
-                      << " | FPS: " << std::setprecision(1) << std::setw(5) << fps
-                      << " | RTF: " << std::setprecision(2) << realtime_factor << "x"
-                  << " | Contacts: " << collision_count
-                  << " | Sphere Z: " << std::setprecision(3) << sphereObject->GetPos().z()
-                  << " | Ground: " << terrain.GetHeight(sphereObject->GetPos())
-                  << std::endl;
-            
-            // Reset for next interval
-            total_step_time = 0.0;
-            max_step_time = 0.0;
-            min_step_time = 1e9;
-            last_report_time = now;
-        }
+        //// Performance tracking
+        //auto step_end = std::chrono::high_resolution_clock::now();
+        //double step_time_ms = std::chrono::duration<double, std::milli>(step_end - step_start).count();
+        //total_step_time += step_time_ms;
+        //max_step_time = std::max(max_step_time, step_time_ms);
+        //min_step_time = std::min(min_step_time, step_time_ms);
+        //frame_count++;
+        //
+        //// Periodic performance report
+        //if (frame_count % report_interval == 0) {
+        //    auto now = std::chrono::high_resolution_clock::now();
+        //    double elapsed_sec = std::chrono::duration<double>(now - last_report_time).count();
+        //    double avg_step_ms = total_step_time / report_interval;
+        //    double fps = report_interval / elapsed_sec;
+        //    double realtime_factor = (step_size * report_interval) / elapsed_sec;
+        //    
+        //    std::cout << "Frame " << std::setw(6) << frame_count 
+        //              << " | Sim time: " << std::fixed << std::setprecision(2) << std::setw(6) << time << "s"
+        //              << " | Step: " << std::setprecision(2) << std::setw(5) << avg_step_ms << "ms"
+        //              << " (min:" << std::setw(4) << min_step_time << ", max:" << std::setw(5) << max_step_time << ")"
+        //              << " | FPS: " << std::setprecision(1) << std::setw(5) << fps
+        //              << " | RTF: " << std::setprecision(2) << realtime_factor << "x"
+        //          << " | Contacts: " << collision_count
+        //          << " | Sphere Z: " << std::setprecision(3) << sphereObject->GetPos().z()
+        //          << " | Ground: " << terrain.GetHeight(sphereObject->GetPos())
+        //          << std::endl;
+        //    
+        //    // Reset for next interval
+        //    total_step_time = 0.0;
+        //    max_step_time = 0.0;
+        //    min_step_time = 1e9;
+        //    last_report_time = now;
+        //}
     }
 
 

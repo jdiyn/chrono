@@ -1860,16 +1860,8 @@ void cbtConvexHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
 
     cbtVector3 tempVert;
     auto getVert = [&](int x, int z) -> cbtVector3 {
-        // Try flat vertex cache first
         if (!vcache.empty())
             return vcache[static_cast<std::size_t>(z) * W + x];
-        // Try tiled cache for large terrains
-        if (terrainShape->getUseTiledCache()) {
-            cbtVector3 tv;
-            if (terrainShape->getVertexFromTiledCache(x, z, tv))
-                return tv;
-        }
-        // Fallback: compute on the fly
         terrainShape->getVertexAt(x, z, tempVert);
         return tempVert;
     };
@@ -2619,16 +2611,8 @@ void cbtSphereHeightfieldAlgorithm::processCollision(const cbtCollisionObjectWra
         const auto& vcache = terrainShape->getVertexCache();
         cbtVector3 tmpVert;
         auto getVert = [&](int x, int z) -> cbtVector3 {
-            // Try flat vertex cache first
             if (!vcache.empty())
                 return vcache[static_cast<std::size_t>(z) * W + x];
-            // Try tiled cache for large terrains
-            if (terrainShape->getUseTiledCache()) {
-                cbtVector3 tv;
-                if (terrainShape->getVertexFromTiledCache(x, z, tv))
-                    return tv;
-            }
-            // Fallback: compute on the fly
             terrainShape->getVertexAt(x, z, tmpVert);
             return tmpVert;
         };

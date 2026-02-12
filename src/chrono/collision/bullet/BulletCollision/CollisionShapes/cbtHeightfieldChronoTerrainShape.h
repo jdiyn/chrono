@@ -31,7 +31,7 @@
 //
 // ## Caching Strategy
 // - Small heightfields (≤512×512): Flat vertex cache, rebuilt on dirty region
-// - Large heightfields (>1M vertices): Tiled LOD cache with incremental updates
+// - Large heightfields: On-the-fly vertex computation (fast enough for O(1) neighborhood queries)
 // - Quad extents cache: Min/max heights per quad for O(1) early-out rejection
 //
 // =============================================================================
@@ -460,45 +460,6 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     void setAutoCacheThreshold(int maxVertices) { m_autoCacheThreshold = maxVertices; }
     int getAutoCacheThreshold() const { return m_autoCacheThreshold; }
     
-    // ========================================================================
-    // TILED LOD VERTEX CACHE - for large terrains (e.g., 2048x2048+)
-    // ========================================================================
-    // Instead of caching all vertices (which would be ~48MB for 2048x2048),
-    // we divide the terrain into tiles and cache only nearby tiles at full res.
-    // Distant tiles can be at lower LOD or not cached at all.
-    
-    static constexpr int DEFAULT_TILE_SIZE = 64;       // 64x64 vertices per tile
-    static constexpr int DEFAULT_TILE_CACHE_RADIUS = 4; // Cache tiles within 4-tile radius
-    
-    struct CachedTile {
-        std::vector<cbtVector3> vertices;  // tileSize × tileSize vertices
-        int lodLevel;                       // 0 = full res, 1 = half res, etc.
-        int tileX, tileZ;                   // Tile coordinates
-        bool valid;
-    };
-    
-    /// Enable/disable tiled caching (for large terrains)
-    void setUseTiledCache(bool enable, int tileSize = DEFAULT_TILE_SIZE);
-    bool getUseTiledCache() const { return m_useTiledCache; }
-    
-    /// Set the cache radius (how many tiles around query point to cache)
-    void setTileCacheRadius(int radius) { m_tileCacheRadius = radius; }
-    int getTileCacheRadius() const { return m_tileCacheRadius; }
-    
-    /// Update tile cache around a world position.
-    /// NOTE: This mutates internal caches; do not call from Bullet's parallel
-    /// narrowphase (e.g., cbtCollisionDispatcherMt/OpenMP). Call only from
-    /// single-threaded code outside collision dispatch.
-    void updateTileCacheAroundPosition(const cbtVector3& localPos);
-    
-    /// Get vertex from tiled cache (returns false if tile not cached)
-    bool getVertexFromTiledCache(int x, int z, cbtVector3& outVertex) const;
-    
-    /// Get tile dimensions
-    int getTileCountX() const { return m_tileCountX; }
-    int getTileCountZ() const { return m_tileCountZ; }
-    int getTileSize() const { return m_tileSize; }
-
     /// Statistics structure for diagnostics
     struct Statistics {
         int totalVertices;
@@ -507,16 +468,10 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         size_t heightDataBytes;
         size_t vertexCacheBytes;
         size_t quadExtentsBytes;
-        size_t tiledCacheBytes;
         size_t acceleratorBytes;
         size_t totalMemoryBytes;
         bool usingVertexCache;
         bool usingQuadExtents;
-        bool usingTiledCache;
-        int tileCountX;
-        int tileCountZ;
-        int tileSize;
-        int cachedTileCount;
         int acceleratorChunkSize;
     };
     
@@ -529,27 +484,12 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         s.heightDataBytes = s.totalVertices * sizeof(cbtScalar);
         s.vertexCacheBytes = m_vertexCache.size() * sizeof(cbtVector3);
         s.quadExtentsBytes = m_quadExtents.size() * sizeof(QuadExtents);
-        
-        // Count cached tiles
-        s.cachedTileCount = 0;
-        s.tiledCacheBytes = m_tiledCache.size() * sizeof(CachedTile);
-        for (const auto& tile : m_tiledCache) {
-            if (tile.valid) {
-                s.cachedTileCount++;
-                s.tiledCacheBytes += tile.vertices.size() * sizeof(cbtVector3);
-            }
-        }
-        
         s.acceleratorBytes = m_vboundsGrid.size() * sizeof(Range);
         s.totalMemoryBytes = s.heightDataBytes + s.vertexCacheBytes + s.quadExtentsBytes + 
-                            s.tiledCacheBytes + s.acceleratorBytes;
+                            s.acceleratorBytes;
         
         s.usingVertexCache = m_useVertexCache;
         s.usingQuadExtents = m_useQuadExtentsCache;
-        s.usingTiledCache = m_useTiledCache;
-        s.tileCountX = m_tileCountX;
-        s.tileCountZ = m_tileCountZ;
-        s.tileSize = m_tileSize;
         s.acceleratorChunkSize = m_vboundsChunkSize;
         return s;
     }
@@ -623,21 +563,6 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     // Update accelerator chunks affected by a region
     void updateAcceleratorRegion(int x0, int z0, int x1, int z1);
     
-    // Tiled cache members
-    bool m_useTiledCache{false};
-    int m_tileSize{DEFAULT_TILE_SIZE};
-    int m_tileCacheRadius{DEFAULT_TILE_CACHE_RADIUS};
-    int m_tileCountX{0};
-    int m_tileCountZ{0};
-    std::vector<CachedTile> m_tiledCache;  // Flat array of tiles
-    int m_lastCacheCenterTileX{-1};
-    int m_lastCacheCenterTileZ{-1};
-    
-    // Build a single tile's vertex cache
-    void buildTileCache(int tileX, int tileZ, int lodLevel = 0);
-    // Invalidate tiles in a region
-    void invalidateTilesInRegion(int x0, int z0, int x1, int z1);
-
     void updateInverseLocalScaling();
     /// Get vertex position at integer grid coordinates.
     /// Heights are BASE-relative (minHeight at z=0), planar coords centered.
