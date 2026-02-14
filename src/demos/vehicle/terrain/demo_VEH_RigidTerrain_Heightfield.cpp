@@ -449,14 +449,13 @@ int main(int argc, char* argv[]) {
     if (perlinNx * perlinNy <= 512 * 512) {
         vertexCacheMB = (perlinNx * perlinNy * 3 * sizeof(double)) / (1024 * 1024);
     }
-    size_t quadExtentsMB = 0;
-    if (perlinNx * perlinNy <= 1024 * 1024) {
-        quadExtentsMB = ((perlinNx - 1) * (perlinNy - 1) * 2 * sizeof(double)) / (1024 * 1024);
-    }
+    // Quad extents cache is always enabled (default m_useQuadExtentsCache = true).
+    // Each quad stores min/max height (2 scalars).
+    size_t quadExtentsMB = ((perlinNx - 1) * (perlinNy - 1) * 2 * sizeof(double)) / (1024 * 1024);
     std::cout << "Estimated collision memory: " << (heightDataMB + vertexCacheMB + quadExtentsMB) << " MB\n";
     std::cout << "  - Height data: " << heightDataMB << " MB\n";
     std::cout << "  - Vertex cache: " << (vertexCacheMB > 0 ? std::to_string(vertexCacheMB) + " MB" : "disabled (large terrain)") << "\n";
-    std::cout << "  - Quad extents: " << (quadExtentsMB > 0 ? std::to_string(quadExtentsMB) + " MB" : "disabled (large terrain)") << "\n";
+    std::cout << "  - Quad extents: " << quadExtentsMB << " MB\n";
     std::cout << "====================================================\n\n";
 
     // driver
