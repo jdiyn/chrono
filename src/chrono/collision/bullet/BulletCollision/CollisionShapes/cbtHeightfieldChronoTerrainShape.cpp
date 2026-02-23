@@ -78,26 +78,6 @@ void cbtHeightfieldChronoTerrainShape::quantizeWithClamp(int out[3], const cbtVe
 ////------------------------------------------------------------------------------
 //// replicate Bullet’s getVertex (including centering by m_localOrigin)
 ////------------------------------------------------------------------------------
-// void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3& vtx) const {
-//    cbtScalar h = getRawHeightFieldValue(x, y) * m_heightScale;
-//    switch (m_upAxis) {
-//        case 0:
-//            vtx.setValue(h - m_localOrigin.getX(), (-m_width * cbtScalar(0.5)) + cbtScalar(x),
-//                         (-m_length * cbtScalar(0.5)) + cbtScalar(y));
-//            break;
-//        case 1:
-//            vtx.setValue((-m_width * cbtScalar(0.5)) + cbtScalar(x), h - m_localOrigin.getY(),
-//                         (-m_length * cbtScalar(0.5)) + cbtScalar(y));
-//            break;
-//        case 2:
-//            vtx.setValue((-m_width * cbtScalar(0.5)) + cbtScalar(x), (-m_length * cbtScalar(0.5)) + cbtScalar(y),
-//                         h - m_localOrigin.getZ());
-//            break;
-//        default:
-//            cbtAssert(false);
-//    }
-//    vtx *= m_localScaling;
-//}
 
 // uses the cached vertices
 inline void cbtHeightfieldChronoTerrainShape::getVertex(int x, int y, cbtVector3& vtx) const {
@@ -565,8 +545,9 @@ void cbtHeightfieldChronoTerrainShape::updateAcceleratorRegion(int x0, int z0, i
 }
 
 // accelerator build/clear
-// TODO:- we likley don't need the accelerator anymore. however, its worth considering this where the terrain is partitioned into patches
-//      perhaps at a higher level - i.e. up in the Chrono class. Not rigid terrain, since we want to move this to dynamic terrain handling (i.e. not 'rigid')
+// Note: The accelerator provides chunked min/max height bounds used by performRaycast()
+// and chunk-level height rejection in collision algorithms. Worth considering at a higher
+// level for dynamic terrain handling (i.e. not 'rigid').
 void cbtHeightfieldChronoTerrainShape::buildAccelerator(int chunkSize) {
     if (chunkSize <= 0) {
         clearAccelerator();
@@ -693,7 +674,7 @@ void cbtHeightfieldChronoTerrainShape::processAllTriangles(cbtTriangleCallback* 
                                                            const cbtVector3& aabbMaxWorld) const {
 
     // Convert the world‑space AABB into the *un‑scaled* local grid frame
-    const cbtVector3 invS = getInverseLocalScaling();   /// TODO:- should this be cached? with handling of cache - updates?
+    const cbtVector3 invS = getInverseLocalScaling();   // cached in m_invLocalScaling, updated on setLocalScaling()
     const cbtVector3 aabbMin = aabbMinWorld * invS;
     const cbtVector3 aabbMax = aabbMaxWorld * invS;
 

@@ -418,14 +418,9 @@ void ChCollisionModelBullet::injectHeightfield(std::shared_ptr<ChCollisionShapeH
     }
     bt_hf->setLocalScaling(localScaling);
 
-    // apply margin in one go
+    // apply margin
     cbtScalar full_margin = GetSuggestedFullMargin();
-
-    // TODO: the note here would imply that the note above is incorrect? safe margin vs margin?
-    bt_hf->setMargin(full_margin); // Ensure this is set so that objects DONT sink through the heightfield
-
-    // TODO - this is likely not necessary anymore!
-    bt_hf->buildAccelerator(16); // build a chunked grid to speed bullet up. 16 should cover most cases
+    bt_hf->setMargin(full_margin);
 
     // Set custom material callback flag before injecting (injectShape will set the collision shape)
     bt_collision_object->setCollisionFlags(bt_collision_object->getCollisionFlags() |

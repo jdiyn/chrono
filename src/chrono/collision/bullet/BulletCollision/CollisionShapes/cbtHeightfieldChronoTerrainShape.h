@@ -51,7 +51,8 @@
 // ============================================================================
 // Speedup for closest-point and bilinear calculations
 // Falls back to scalar code on platforms without SSE support
-//  TODO: (Chrono has preprocessors definitions for this??)
+// Note: Uses compiler-intrinsic detection rather than Chrono's CH_SSE preprocessor
+// to keep this Bullet-level shape self-contained and independent of Chrono headers.
 #if defined(__SSE__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 1)
     #define CBT_HF_USE_SIMD 1
     #include <xmmintrin.h>  // SSE
@@ -239,7 +240,7 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
         return m_localOrigin;
     }
 
-    /// constructor generic with cbtscalar - shoul dhandle either doubles or float
+    /// Constructor — accepts cbtScalar array (handles both double and float builds)
     cbtHeightfieldChronoTerrainShape(int heightStickWidth, int heightStickLength,  // length = width*length
                                      const cbtScalar* heightfieldData,                  ///< absolute height data, row-major, j=0 is bottom row
                                      cbtScalar heightScale, cbtScalar minHeight_centered, cbtScalar maxHeight_centered,
@@ -424,21 +425,6 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
                      cbtVector3& SurfaceNormal) const;         // surface normal (world)
 
 
-    /// rolling friction coefficient setters and getters
-    void setRollingFriction(cbtScalar friction) {
-        m_rollingFriction = friction;
-    }
-    cbtScalar getRollingFriction() const {
-        return m_rollingFriction;
-    }
-
-    void setSpinningFriction(cbtScalar friction) {
-        m_spinningFriction = friction;
-    }
-    cbtScalar getSpinningFriction() const {
-        return m_spinningFriction;
-    }
-
     // Future: Method to update heights dynamically
     void updateHeight(int x, int y, cbtScalar newHeight_absolute);
     void updateHeights(const cbtScalar* newHeights_absolute, int numSamples);
@@ -529,10 +515,6 @@ cbtHeightfieldChronoTerrainShape : public cbtConcaveShape {
     int m_vboundsGridWidth;
     int m_vboundsGridLength;
     int m_vboundsChunkSize;
-
-    /// rolling friction var
-    cbtScalar m_rollingFriction{0.0f};
-    cbtScalar m_spinningFriction{0.0f};
 
 
     // caching quads

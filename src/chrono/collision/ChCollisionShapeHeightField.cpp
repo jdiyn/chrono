@@ -206,15 +206,22 @@ bool ChCollisionShapeHeightField::RayHit(const ChCoordsys<>& frame,
 }
 
 
+// ============================================================================
+// Serialization
+// ============================================================================
+// Note: Only the precision-matching height array is serialized (double or float
+// depending on BT_USE_DOUBLE_PRECISION). The other array and all Bullet-level
+// caches (vertex cache, quad extents, accelerator) are reconstructed when the
+// Bullet collision shape is created from this data during model injection.
+
 void ChCollisionShapeHeightField::ArchiveOut(ChArchiveOut& archive_out) {
     archive_out.VersionWrite<ChCollisionShapeHeightField>();
     archive_out << CHNVP(m_nx);
     archive_out << CHNVP(m_ny);
     archive_out << CHNVP(m_width);
     archive_out << CHNVP(m_length);
-#ifdef BT_USE_DOUBLE_PRECISION
     archive_out << CHNVP(m_heights);
-#else
+#ifndef BT_USE_DOUBLE_PRECISION
     archive_out << CHNVP(m_heights_f);
 #endif
     archive_out << CHNVP(m_heightScale);
@@ -231,9 +238,8 @@ void ChCollisionShapeHeightField::ArchiveIn(ChArchiveIn& archive_in) {
     archive_in >> CHNVP(m_ny);
     archive_in >> CHNVP(m_width);
     archive_in >> CHNVP(m_length);
-#ifdef BT_USE_DOUBLE_PRECISION
     archive_in >> CHNVP(m_heights);
-#else
+#ifndef BT_USE_DOUBLE_PRECISION
     archive_in >> CHNVP(m_heights_f);
 #endif
     archive_in >> CHNVP(m_heightScale);

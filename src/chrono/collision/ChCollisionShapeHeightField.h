@@ -69,11 +69,9 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     double            GetFieldWidth()     const { return m_width; }
     double            GetFieldLength()    const { return m_length; }
     // Return NON-CONST pointer for Bullet shape creation (in ch collision model bullet)
-   // double* GetHeights() { return m_heights.data(); }              // Non-const version
     const double* GetHeights() const { return m_heights.data(); }  // ABSOLUTE HEIGHTS! NOT SHIFTED HEIGHTS!
 #ifndef BT_USE_DOUBLE_PRECISION
     // if bullet is single precision
-   // float* GetHeightsFloat() { return m_heights_f.data(); }
     const float* GetHeightsFloat() const { return m_heights_f.data(); }
  #endif
  
@@ -123,11 +121,16 @@ class ChApi ChCollisionShapeHeightField : public ChCollisionShape {
     bool                    m_flipQuadEdges;
     float                   sradius;
 
-    // Precompute cell sizes (metres) and reciprocals to trasnlate to from the grid
-    double m_cellSizeU;  // width  /(nx1)
-     double m_cellSizeV;      // length /(ny1)
-     double m_invCellSizeU;   // 1/m_cellSizeU
-     double m_invCellSizeV;   // 1/m_cellSizeV
+    // Precompute cell sizes (metres) and reciprocals to translate to/from the grid
+    //
+    // Memory note: m_heights (double) is always kept for RayHit() precision.
+    // In float builds, m_heights_f is an additional float copy passed to Bullet.
+    // Bullet then makes its own BASE-shifted copy internally.
+    // Total: 2 copies (double build) or 3 copies (float build) — by design.
+    double m_cellSizeU;     // width / (nx - 1)
+    double m_cellSizeV;     // length / (ny - 1)
+    double m_invCellSizeU;  // 1 / m_cellSizeU
+    double m_invCellSizeV;  // 1 / m_cellSizeV
 
 };
 

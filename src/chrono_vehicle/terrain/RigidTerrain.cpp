@@ -129,6 +129,23 @@ void RigidTerrain::LoadPatch(const rapidjson::Value& d) {
         }
         patch = AddPatch(material, ChCoordsys<>(loc, rot), GetVehicleDataFile(bmp_file), sx, sy, hMin, hMax,
                          connected_mesh);
+    } else if (d["Geometry"].HasMember("Heightfield Image")) {
+        // Heightfield patch using the optimized cbtHeightfieldChronoTerrainShape collision shape.
+        // JSON example:
+        //   "Geometry": {
+        //       "Heightfield Image": "terrain/my_heightmap.bmp",
+        //       "Size": [80.0, 80.0],
+        //       "Height Range": [0.0, 10.0]
+        //   }
+        std::string bmp_file = d["Geometry"]["Heightfield Image"].GetString();
+        double sx = d["Geometry"]["Size"][0u].GetDouble();
+        double sy = d["Geometry"]["Size"][1u].GetDouble();
+        double hMin = d["Geometry"]["Height Range"][0u].GetDouble();
+        double hMax = d["Geometry"]["Height Range"][1u].GetDouble();
+        double sweep = 0.005;
+        if (d["Geometry"].HasMember("Sweep Sphere Radius"))
+            sweep = d["Geometry"]["Sweep Sphere Radius"].GetDouble();
+        patch = AddPatch(material, ChCoordsys<>(loc, rot), GetVehicleDataFile(bmp_file), sx, sy, hMin, hMax, sweep);
     }
 
     // Set visualization data

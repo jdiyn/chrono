@@ -1415,24 +1415,29 @@ void cbtCollisionWorld::debugDrawObject(const cbtTransform& worldTransform, cons
             case TERRAIN_SHAPE_PROXYTYPE: /* ***CHRONO*** */
             {
                 const auto* hf = static_cast<const cbtHeightfieldChronoTerrainShape*>(shape);
-                // decimate so never push more than 4000 points (shouldn't need higher res for debug draw)
-                const auto& VC = hf->getVertexCache();
-                const int tot = (int)VC.size();
-                //const int step = tot > 4096 ? 1 + int(std::sqrt(double(tot) / 4096.0)) : 1;
-                const int step = 1;  // draw every grid point. Change this if you want to decimate the grid
-
-                const int W = hf->getWidth();  // grid size
+                const int W = hf->getWidth();
                 const int L = hf->getLength();
+                const auto& VC = hf->getVertexCache();
+                const bool hasCache = !VC.empty();
 
-                for (int i = 0; i < tot; i += step) {
-                    const cbtVector3 Pw = worldTransform * VC[i];
-                    //getDebugDrawer()->drawContactPoint(Pw, cbtVector3(0, 0, 0), 0 /*dist*/, 0 /*life*/, color);
-					// draw grid 'squares'
-                    const int x = i % W, z = i / W;
-                    if (x + step < W)  // X neighbour
-                        getDebugDrawer()->drawLine(Pw, worldTransform * VC[i + step], color);
-                    if (z + step < L)  // Z neighbour
-                        getDebugDrawer()->drawLine(Pw, worldTransform * VC[i + step * W], color);
+                // Helper: get vertex either from cache or computed on-the-fly
+                auto getVtx = [&](int x, int z) -> cbtVector3 {
+                    if (hasCache) {
+                        return VC[z * W + x];
+                    }
+                    cbtVector3 v;
+                    hf->getVertexAt(x, z, v);
+                    return v;
+                };
+
+                for (int z = 0; z < L; ++z) {
+                    for (int x = 0; x < W; ++x) {
+                        const cbtVector3 Pw = worldTransform * getVtx(x, z);
+                        if (x + 1 < W)
+                            getDebugDrawer()->drawLine(Pw, worldTransform * getVtx(x + 1, z), color);
+                        if (z + 1 < L)
+                            getDebugDrawer()->drawLine(Pw, worldTransform * getVtx(x, z + 1), color);
+                    }
                 }
                 break;
             }

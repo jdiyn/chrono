@@ -2572,6 +2572,56 @@ void ChVisualSystemVSG::PopulateCollisionShapeFixed(vsg::ref_ptr<vsg::Group> gro
             transform->matrix = vsg::dmat4CH(X_SM, ChVector3d(1, 1, 1));
             auto grp = m_shapeBuilder->CreateTrimeshColShape(trimesh_connected, transform, m_collision_color, true);
             group->addChild(grp);
+        } else if (auto hfield = std::dynamic_pointer_cast<ChCollisionShapeHeightField>(shape)) {
+            // Build a trimesh from the heightfield grid for collision shape visualization.
+            // Downsample large heightfields to keep the wireframe manageable.
+            const int nx = hfield->GetWidthSamples();
+            const int ny = hfield->GetLengthSamples();
+            const double dimX = hfield->GetFieldWidth();
+            const double dimY = hfield->GetFieldLength();
+            const float hScale = hfield->GetHeightScale();
+            const float hMin = hfield->GetMinHeight();
+            const double* heights = hfield->GetHeights();
+
+            // Downsample to at most 512×512 for rendering
+            int step = 1;
+            while ((nx + step - 1) / step > 512 || (ny + step - 1) / step > 512)
+                step *= 2;
+            const int vnx = (nx + step - 1) / step;
+            const int vny = (ny + step - 1) / step;
+            const double dx = dimX / (vnx - 1);
+            const double dy = dimY / (vny - 1);
+            const double halfX = dimX * 0.5;
+            const double halfY = dimY * 0.5;
+
+            auto hf_mesh = chrono_types::make_shared<ChTriangleMeshConnected>();
+            auto& verts = hf_mesh->GetCoordsVertices();
+            auto& idx = hf_mesh->GetIndicesVertexes();
+            verts.resize(vnx * vny);
+
+            for (int iy = 0; iy < vny; ++iy) {
+                int sy = std::min(iy * step, ny - 1);
+                for (int ix = 0; ix < vnx; ++ix) {
+                    int sx = std::min(ix * step, nx - 1);
+                    double h = heights[sy * nx + sx] * hScale - hMin * hScale;  // BASE-relative
+                    verts[iy * vnx + ix] = ChVector3d(ix * dx - halfX, iy * dy - halfY, h);
+                }
+            }
+
+            idx.resize(2 * (vnx - 1) * (vny - 1));
+            int it = 0;
+            for (int iy = 0; iy < vny - 1; ++iy) {
+                for (int ix = 0; ix < vnx - 1; ++ix) {
+                    int v0 = iy * vnx + ix;
+                    idx[it++] = ChVector3i(v0, v0 + vnx + 1, v0 + vnx);
+                    idx[it++] = ChVector3i(v0, v0 + 1, v0 + vnx + 1);
+                }
+            }
+
+            auto transform = vsg::MatrixTransform::create();
+            transform->matrix = vsg::dmat4CH(X_SM, ChVector3d(1, 1, 1));
+            auto grp = m_shapeBuilder->CreateTrimeshColShape(hf_mesh, transform, m_collision_color, true);
+            group->addChild(grp);
         }
     }
 }
